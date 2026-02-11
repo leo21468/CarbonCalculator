@@ -1,0 +1,60 @@
+# 税收分类编码 → 排放范围 映射规则
+# 对应设计：19位税号 → 排放因子 映射表、排除规则、兜底规则
+# 编码可为前缀（如 1 开头为煤炭）或完整19位
+
+rules:
+  # ---------- Scope 1：直接燃烧燃料 ----------
+  - scope: Scope 1
+    name: 煤炭采选产品
+    tax_code_prefixes: ["101", "102", "103"]  # 示例前缀，按国标扩展
+    keywords: ["煤炭", "原煤", "洗煤", "型煤"]
+    emission_factor_id: coal
+    exclude_keywords: []
+
+  - scope: Scope 1
+    name: 石油和天然气开采产品
+    tax_code_prefixes: ["104", "105"]
+    keywords: ["原油", "天然气", "液化气"]
+    emission_factor_id: oil_gas
+    exclude_keywords: []
+
+  - scope: Scope 1
+    name: 燃气
+    tax_code_prefixes: ["106"]
+    keywords: ["燃气", "煤气", "天然气"]
+    emission_factor_id: gas
+    exclude_keywords: []
+
+  - scope: Scope 1
+    name: 石油加工炼焦（燃料用途）
+    tax_code_prefixes: ["107", "108"]
+    keywords: ["成品油", "汽油", "柴油", "燃料油", "炼焦"]
+    emission_factor_id: refined_oil
+    exclude_keywords: ["沥青", "蜡", "碳黑", "润滑油", "石蜡"]
+
+  # ---------- Scope 2：外购电、热、冷 ----------
+  - scope: Scope 2
+    name: 电力热力冷气
+    tax_code_prefixes: ["109", "110"]
+    keywords: ["电力", "电费", "热力", "冷气", "供暖"]
+    emission_factor_id: electricity_heat
+    exclude_keywords: []
+
+  # ---------- Scope 3：租赁默认、服务一刀切 ----------
+  - scope: Scope 3
+    name: 有形动产租赁
+    tax_code_prefixes: ["304", "305"]
+    keywords: ["租赁", "租车", "租设备", "经营性租赁"]
+    emission_factor_id: scope3_lease
+    exclude_keywords: []
+    note: "融资租赁(长租)建议由固定资产台账管理 Scope 1，发票默认 Scope 3"
+
+  - scope: Scope 3
+    name: 服务劳务
+    tax_code_prefixes: ["300", "301", "302", "303"]
+    keywords: ["服务", "劳务", "运输", "物流", "快递", "咨询", "IT", "电信", "顺丰", "EMS"]
+    emission_factor_id: scope3_service
+    exclude_keywords: []
+
+# 兜底：未匹配到的全部 Scope 3
+default_scope: Scope 3

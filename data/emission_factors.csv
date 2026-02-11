@@ -1,0 +1,10 @@
+factor_id,scope,unit,kg_co2e_per_unit,description
+electricity_heat,Scope 2,kWh,0.5839,电力(全国平均或可替换省级)
+heat,Scope 2,GJ,110,热力
+coal,Scope 1,t,2550,原煤
+oil_gas,Scope 1,t,2300,原油/天然气当量
+gas,Scope 1,m3,2.0,燃气(立方米)
+refined_oil,Scope 1,L,2.3,成品油(升)
+scope3_default,Scope 3,CNY,0.00015,EEIO默认(万元产值kg，此处按元)
+scope3_lease,Scope 3,CNY,0.00012,租赁
+scope3_service,Scope 3,CNY,0.0001,服务/物流
