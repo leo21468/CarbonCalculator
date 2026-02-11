@@ -8,9 +8,10 @@ PyYAML>=6.0
 # ofdreader>=0.1.0     # OFD（若有）
 # lxml>=4.9.0          # XML
 
-# 数值与数据处理
+# 数值与数据处理（含 reference table.xlsx 读取）
 numpy>=1.24.0
 pandas>=2.0.0
+openpyxl>=3.0.0
 
 # 可选：NLP/语义分类（后续接入 BERT/LLM）
 # transformers>=4.30.0

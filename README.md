@@ -28,9 +28,10 @@
 
 ```
 CarbonCalculator/
+├── reference table.xlsx           # 税收分类编码→排放范围映射表（优先加载）
 ├── data/
-│   ├── tax_code_to_scope.csv      # 税号前缀 → Scope 简表
-│   ├── scope_mapping_rules.yaml   # 详细映射与排除/关键词规则
+│   ├── tax_code_to_scope.csv      # 税号前缀 → Scope 简表（回退）
+│   ├── scope_mapping_rules.yaml   # 详细映射与排除/关键词规则（回退 + 关键词）
 │   └── emission_factors.csv       # 排放因子表（19位税号→因子）
 ├── src/
 │   ├── config.py                  # 碳价、排放因子等配置
@@ -53,7 +54,7 @@ CarbonCalculator/
 ## 依赖与运行
 
 - Python 3.9+
-- 核心依赖：`PyYAML`（映射规则）；可选：`pandas`/`numpy`、发票解析库、`requests`/`beautifulsoup4`（碳价抓取）
+- 核心依赖：`PyYAML`、`pandas`、`openpyxl`（reference table.xlsx 读取）；可选：`numpy`、发票解析库、`requests`/`beautifulsoup4`（碳价抓取）
 
 ```bash
 pip install -r requirements.txt
@@ -100,7 +101,7 @@ st = pipeline.build_statement(
 
 ### 映射表与因子
 
-- **19 位税号 → Scope**：在 `data/scope_mapping_rules.yaml` 与 `data/tax_code_to_scope.csv` 中维护；代码中建立「19 位税号 → 排放因子」通过 `emission_factor_id` 关联 `data/emission_factors.csv`。
+- **19 位税号 → Scope**：优先从项目根目录 `reference table.xlsx` 加载（支持列名：税收分类编码、排放范围、排除关键词、排放因子）；若文件不存在则回退到 `data/scope_mapping_rules.yaml` 与 `data/tax_code_to_scope.csv`。可通过 `AppConfig.scope_mapping.ref_table_path` 指定自定义路径。
 - **碳价**：不参与碳市场时使用内部价（如 100–300 元/吨）；履约时可对接上海环境能源交易所每日收盘价（见 `carbon_price_fetcher.py` 占位）。
 
 ## 设计依据

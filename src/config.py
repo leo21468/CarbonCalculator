@@ -3,6 +3,7 @@
 """
 from __future__ import annotations
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Optional
 
 
@@ -14,6 +15,12 @@ class CarbonPriceConfig:
     currency: str = "CNY"
     # 若 source=market，可填交易所/抓取URL
     market_source: Optional[str] = None  # 如 "上海环境能源交易所"
+
+
+@dataclass
+class ScopeMappingConfig:
+    """税收编码→排放范围映射配置"""
+    ref_table_path: Optional[Path] = None  # reference table.xlsx 路径，默认项目根目录
 
 
 @dataclass
@@ -30,6 +37,7 @@ class EmissionConfig:
 @dataclass
 class AppConfig:
     """应用总配置"""
+    scope_mapping: ScopeMappingConfig = field(default_factory=ScopeMappingConfig)
     carbon_price: CarbonPriceConfig = field(
         default_factory=lambda: CarbonPriceConfig(
             source="internal",

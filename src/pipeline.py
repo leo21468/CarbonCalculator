@@ -29,7 +29,9 @@ class CarbonAccountingPipeline:
     def __init__(self, config: Optional[AppConfig] = None):
         self.config = config or AppConfig()
         self.parser = JsonXmlInvoiceParser()
-        self.classifier = InvoiceScopeClassifier()
+        self.classifier = InvoiceScopeClassifier(
+            ref_table_path=self.config.scope_mapping.ref_table_path,
+        )
         self.calculator = EmissionCalculator()
 
     def process_invoice(
