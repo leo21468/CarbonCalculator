@@ -1,0 +1,10 @@
+tax_code_prefix,scope,description,exclude_keywords,emission_factor_id
+1,Scope 1,煤炭采选产品,,coal
+2,Scope 1,石油和天然气开采产品,,oil_gas
+3,Scope 1,燃气,,gas
+4,Scope 1,石油加工、炼焦及核燃料,沥青;蜡;碳黑;润滑油,refined_oil
+5,Scope 2,电力和热力、冷气,,electricity_heat
+6,Scope 3,农业产品,,scope3_default
+7,Scope 3,食品、纺织品、机械设备等,,scope3_default
+8,Scope 3,有形动产租赁服务(经营性默认),,scope3_lease
+9,Scope 3,销售服务、劳务、电信/物流/咨询/IT,,scope3_service
