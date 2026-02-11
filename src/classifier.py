@@ -5,6 +5,9 @@
 from __future__ import annotations
 from typing import List, Optional
 
+from pathlib import Path
+from typing import List, Optional
+
 from .models import ClassifiedLineItem, Invoice, InvoiceLineItem, Scope
 from .scope_mapping import TaxCodeScopeMapper
 
@@ -12,11 +15,11 @@ from .scope_mapping import TaxCodeScopeMapper
 class InvoiceScopeClassifier:
     """
     规则引擎 + 关键词 + 可选语义（BERT/LLM 占位）。
-    一级分类：国家税收分类编码与 GHG Protocol 预设映射表；
+    一级分类：国家税收分类编码与 GHG Protocol 预设映射表（优先 reference table.xlsx）；
     宽泛条目：关键词或语义向量判定。
     """
-    def __init__(self):
-        self.mapper = TaxCodeScopeMapper()
+    def __init__(self, ref_table_path: Optional[Path] = None):
+        self.mapper = TaxCodeScopeMapper(ref_table_path=ref_table_path)
 
     def classify_invoice(self, invoice: Invoice) -> List[ClassifiedLineItem]:
         """对整张发票的每一行进行分类"""
