@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from typing import List, Optional
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -66,29 +66,6 @@ class ProductAddRequest(BaseModel):
     unit: str
     price_per_ton: float = 100.0
     remark: str = ""
-
-
-class InvoiceLineRequest(BaseModel):
-    name: str
-    tax_classification_code: Optional[str] = None
-    tax_classification_name: Optional[str] = None
-    quantity: Optional[float] = None
-    unit: Optional[str] = None
-    unit_price: Optional[float] = None
-    amount: float = 0.0
-    remark: Optional[str] = None
-
-
-class SellerRequest(BaseModel):
-    name: str
-    tax_id: Optional[str] = None
-    address: Optional[str] = None
-
-
-class InvoiceUploadRequest(BaseModel):
-    invoice_number: Optional[str] = None
-    lines: List[InvoiceLineRequest]
-    seller: Optional[SellerRequest] = None
 
 
 # ---------- 静态文件 ----------
@@ -190,24 +167,34 @@ def create_product(req: ProductAddRequest):
 
 
 @app.post("/api/invoice/upload")
-def upload_invoice(req: InvoiceUploadRequest):
+async def upload_invoice(file: UploadFile = File(...)):
     """
-    上传发票数据，分类发票明细行并记录类别统计到数据库。
+    上传 PDF 发票文件，解析发票明细、分类并记录类别统计到数据库。
     返回分类结果及排放核算摘要。
     """
-    if not req.lines:
-        raise HTTPException(status_code=400, detail="发票明细不能为空")
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="请上传文件")
+    if not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="仅支持 PDF 格式的发票文件")
 
-    # 构建 pipeline 输入 dict
-    invoice_dict = {
-        "invoice_number": req.invoice_number,
-        "lines": [line.model_dump() for line in req.lines],
-    }
-    if req.seller:
-        invoice_dict["seller"] = req.seller.model_dump()
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="文件内容为空")
 
+    # 使用 PDF 解析器提取发票数据
+    from src.invoice_parser import PdfInvoiceParser
+    parser = PdfInvoiceParser()
+    try:
+        invoice = parser.parse(content)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"PDF 解析失败：{e}")
+
+    if not invoice.lines:
+        raise HTTPException(status_code=400, detail="未能从 PDF 中提取到发票明细行")
+
+    # 使用 pipeline 分类与核算
     pipeline = _get_pipeline()
-    result = pipeline.process_invoice_from_dict(invoice_dict, ref_invoice_id=req.invoice_number)
+    result = pipeline.process_invoice(invoice, ref_invoice_id=invoice.invoice_number)
 
     classified = result.get("classified", [])
     emission_results = result.get("emission_results", [])
@@ -222,7 +209,7 @@ def upload_invoice(req: InvoiceUploadRequest):
     for i, cl in enumerate(classified):
         records.append(InvoiceCategoryRecord(
             id=None,
-            invoice_number=req.invoice_number,
+            invoice_number=invoice.invoice_number,
             line_name=cl.line.name,
             scope=cl.scope.value,
             match_type=cl.match_type,
@@ -248,6 +235,8 @@ def upload_invoice(req: InvoiceUploadRequest):
 
     return {
         "message": f"发票处理完成，共 {len(classified)} 条明细",
+        "invoice_number": invoice.invoice_number,
+        "seller": invoice.seller.name if invoice.seller else None,
         "lines": lines_result,
         "aggregate": {
             scope.value: round(kg, 4)

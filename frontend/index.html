@@ -129,23 +129,6 @@
       border-bottom: 1px solid var(--border);
       font-size: 0.9rem;
     }
-    .invoice-lines { margin-bottom: 1rem; }
-    .invoice-line {
-      background: var(--bg);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 0.75rem;
-      margin-bottom: 0.5rem;
-    }
-    .invoice-line .form-row { margin-bottom: 0.5rem; }
-    .invoice-line .form-row:last-child { margin-bottom: 0; }
-    .remove-line {
-      background: transparent;
-      color: #f85149;
-      border: 1px solid #f85149;
-      padding: 0.3rem 0.6rem;
-      font-size: 0.8rem;
-    }
     .scope-tag {
       display: inline-block;
       padding: 0.2rem 0.5rem;
@@ -257,21 +240,16 @@
     <!-- 发票上传面板 -->
     <div class="panel" id="panel-invoice">
       <div class="card">
-        <form class="add-form" id="invoiceForm">
+        <form class="add-form" id="invoiceForm" enctype="multipart/form-data">
           <div class="row">
-            <label>发票号码（可选）</label>
-            <input type="text" id="invoiceNumber" placeholder="如：12345678">
+            <label>选择 PDF 发票文件 *</label>
+            <input type="file" id="invoiceFile" accept=".pdf" required
+                   style="padding:0.6rem;cursor:pointer;">
           </div>
-          <div class="row">
-            <label>销方名称（可选）</label>
-            <input type="text" id="sellerName" placeholder="如：国网上海">
-          </div>
-          <label style="color:var(--muted);font-size:0.85rem;">发票明细行</label>
-          <div class="invoice-lines" id="invoiceLines"></div>
-          <div class="form-row">
-            <button type="button" class="secondary" id="btnAddLine">+ 添加明细行</button>
-            <button type="submit" id="btnUpload" style="min-width:120px;">上传并分类</button>
-          </div>
+          <p style="color:var(--muted);font-size:0.8rem;margin:0 0 1rem;">
+            支持中国增值税电子发票 PDF，系统将自动提取明细行并分类至 Scope 1/2/3
+          </p>
+          <button type="submit" id="btnUpload">上传并分类</button>
         </form>
         <div id="invoiceResult" class="result"></div>
       </div>
@@ -298,7 +276,6 @@
     const addMsg = $('addMsg');
     const productList = $('productList');
     const invoiceForm = $('invoiceForm');
-    const invoiceLines = $('invoiceLines');
     const invoiceResult = $('invoiceResult');
 
     function showResult(data) {
@@ -384,62 +361,23 @@
       }
     }
 
-    /* ---------- 发票上传 ---------- */
-    let lineIndex = 0;
-
-    function addInvoiceLine() {
-      const idx = lineIndex++;
-      const div = document.createElement('div');
-      div.className = 'invoice-line';
-      div.dataset.idx = idx;
-      div.innerHTML = `
-        <div class="form-row">
-          <input type="text" placeholder="名称 *（如：电力*电费*）" data-field="name" required style="flex:2">
-          <input type="number" placeholder="金额（元）" data-field="amount" step="0.01" style="flex:1">
-          <button type="button" class="remove-line" onclick="this.closest('.invoice-line').remove()">✕</button>
-        </div>
-        <div class="form-row">
-          <input type="text" placeholder="税收分类编码（19位，可选）" data-field="tax_classification_code" style="flex:2">
-          <input type="number" placeholder="数量" data-field="quantity" step="0.01" style="flex:1">
-          <input type="text" placeholder="单位（如：度）" data-field="unit" style="flex:1">
-        </div>`;
-      invoiceLines.appendChild(div);
-    }
-
-    $('btnAddLine').addEventListener('click', addInvoiceLine);
-    addInvoiceLine();
-
+    /* ---------- 发票 PDF 上传 ---------- */
     invoiceForm.addEventListener('submit', async e => {
       e.preventDefault();
-      const lineDivs = invoiceLines.querySelectorAll('.invoice-line');
-      const lines = [];
-      for (const div of lineDivs) {
-        const name = div.querySelector('[data-field="name"]').value.trim();
-        if (!name) continue;
-        const amount = parseFloat(div.querySelector('[data-field="amount"]').value) || 0;
-        const taxCode = div.querySelector('[data-field="tax_classification_code"]').value.trim() || null;
-        const quantity = parseFloat(div.querySelector('[data-field="quantity"]').value) || null;
-        const unit = div.querySelector('[data-field="unit"]').value.trim() || null;
-        lines.push({ name, amount, tax_classification_code: taxCode, quantity, unit });
-      }
-      if (!lines.length) {
-        invoiceResult.innerHTML = '<p class="error">请至少填写一条明细行</p>';
+      const fileInput = $('invoiceFile');
+      if (!fileInput.files || !fileInput.files.length) {
+        invoiceResult.innerHTML = '<p class="error">请选择 PDF 发票文件</p>';
         return;
       }
-      const body = {
-        invoice_number: $('invoiceNumber').value.trim() || null,
-        lines,
-      };
-      const sellerName = $('sellerName').value.trim();
-      if (sellerName) body.seller = { name: sellerName };
+      const formData = new FormData();
+      formData.append('file', fileInput.files[0]);
 
       $('btnUpload').disabled = true;
-      invoiceResult.innerHTML = '处理中...';
+      invoiceResult.innerHTML = '解析中，请稍候...';
       try {
         const res = await fetch(API + '/api/invoice/upload', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
+          body: formData,
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || '上传失败');
@@ -459,6 +397,12 @@
 
     function showInvoiceResult(data) {
       let html = `<p class="v" style="margin-bottom:0.75rem;">✓ ${data.message}</p>`;
+      if (data.invoice_number || data.seller) {
+        html += '<div style="margin-bottom:0.75rem;font-size:0.9rem;color:var(--muted);">';
+        if (data.invoice_number) html += `发票号码：${data.invoice_number}　`;
+        if (data.seller) html += `销方：${data.seller}`;
+        html += '</div>';
+      }
       if (data.aggregate) {
         html += '<div class="stats-grid">';
         for (const [scope, kg] of Object.entries(data.aggregate)) {

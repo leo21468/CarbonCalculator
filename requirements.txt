@@ -4,7 +4,7 @@
 PyYAML>=6.0
 
 # 发票解析（按需安装）
-# pdfplumber>=0.10.0   # PDF
+pdfplumber>=0.10.0    # PDF
 # ofdreader>=0.1.0     # OFD（若有）
 # lxml>=4.9.0          # XML
 
@@ -24,6 +24,7 @@ scikit-learn>=1.3.0
 # 前后端 API 服务
 fastapi>=0.100.0
 uvicorn>=0.22.0
+python-multipart>=0.0.5  # 文件上传
 
 # 测试
 pytest>=7.0.0

@@ -128,3 +128,226 @@ class JsonXmlInvoiceParser(BaseInvoiceParser):
         for item in data.get("lines", data.get("items", [])):
             inv.lines.append(_line_from_dict(item if isinstance(item, dict) else {"name": str(item), "amount": 0}))
         return inv
+
+
+class PdfInvoiceParser(BaseInvoiceParser):
+    """
+    从 PDF 电子发票中提取结构化数据。
+    使用 pdfplumber 提取表格与文本，解析中国增值税发票的标准字段：
+    货物或应税劳务名称、税收分类编码、金额/单价/数量、销方信息。
+    """
+
+    def supported_formats(self) -> List[str]:
+        return ["PDF"]
+
+    def parse(self, source: Union[str, Path, bytes]) -> Invoice:
+        import io
+        try:
+            import pdfplumber
+        except ImportError:
+            raise ImportError("请安装 pdfplumber: pip install pdfplumber")
+
+        if isinstance(source, (str, Path)):
+            pdf = pdfplumber.open(str(source))
+        else:
+            pdf = pdfplumber.open(io.BytesIO(source))
+
+        try:
+            return self._extract_invoice(pdf)
+        finally:
+            pdf.close()
+
+    def _extract_invoice(self, pdf) -> Invoice:
+        """从 PDF 中提取发票信息"""
+        import re
+
+        all_text = ""
+        all_tables = []
+        for page in pdf.pages:
+            text = page.extract_text() or ""
+            all_text += text + "\n"
+            tables = page.extract_tables() or []
+            all_tables.extend(tables)
+
+        inv = Invoice(source_format="PDF")
+
+        # 提取发票号码
+        m = re.search(r"发票号码[：:\s]*(\d+)", all_text)
+        if m:
+            inv.invoice_number = m.group(1)
+
+        # 提取发票代码
+        m = re.search(r"发票代码[：:\s]*(\d+)", all_text)
+        if m:
+            inv.invoice_code = m.group(1)
+
+        # 提取日期
+        m = re.search(r"(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日", all_text)
+        if m:
+            inv.date = f"{m.group(1)}-{m.group(2).zfill(2)}-{m.group(3).zfill(2)}"
+
+        # 提取销方信息
+        seller_name = self._extract_field(all_text, [
+            r"销\s*售\s*方[：:\s]*名\s*称[：:\s]*(.+)",
+            r"销\s*方[：:\s]*(.+?)(?:\n|税)",
+            r"收款单位[：:\s]*(.+)",
+        ])
+        if seller_name:
+            inv.seller = SellerInfo(name=seller_name.strip())
+
+        # 提取购方信息
+        buyer_name = self._extract_field(all_text, [
+            r"购\s*买\s*方[：:\s]*名\s*称[：:\s]*(.+)",
+            r"购\s*方[：:\s]*(.+?)(?:\n|税)",
+        ])
+        if buyer_name:
+            inv.buyer = SellerInfo(name=buyer_name.strip())
+
+        # 从表格中提取明细行
+        inv.lines = self._extract_lines_from_tables(all_tables, all_text)
+
+        # 若表格解析未得到明细行，尝试从全文正则提取
+        if not inv.lines:
+            inv.lines = self._extract_lines_from_text(all_text)
+
+        # 计算总金额
+        if inv.lines:
+            inv.total_amount = sum(l.amount for l in inv.lines)
+
+        return inv
+
+    def _extract_field(self, text: str, patterns: List[str]) -> Union[str, None]:
+        """按多个正则模式尝试提取字段"""
+        import re
+        for pat in patterns:
+            m = re.search(pat, text)
+            if m:
+                return m.group(1).strip()
+        return None
+
+    def _extract_lines_from_tables(self, tables: list, full_text: str) -> List[InvoiceLineItem]:
+        """从 PDF 表格中提取发票明细行"""
+        import re
+
+        lines = []
+        # 中国发票表格列名关键词
+        name_keywords = ("货物", "名称", "劳务", "项目", "服务")
+        amount_keywords = ("金额", "价税合计", "合计")
+        qty_keywords = ("数量",)
+        unit_keywords = ("单位",)
+        price_keywords = ("单价",)
+        tax_code_keywords = ("编码", "税收分类", "分类编码")
+
+        for table in tables:
+            if not table or len(table) < 2:
+                continue
+            # 识别表头
+            header = table[0]
+            if header is None:
+                continue
+            header_str = [str(h).strip() if h else "" for h in header]
+
+            name_col = self._find_col_index(header_str, name_keywords)
+            amount_col = self._find_col_index(header_str, amount_keywords)
+            qty_col = self._find_col_index(header_str, qty_keywords)
+            unit_col = self._find_col_index(header_str, unit_keywords)
+            price_col = self._find_col_index(header_str, price_keywords)
+            tax_code_col = self._find_col_index(header_str, tax_code_keywords)
+
+            if name_col is None:
+                continue
+
+            for row in table[1:]:
+                if row is None:
+                    continue
+                row_str = [str(c).strip() if c else "" for c in row]
+                name = row_str[name_col] if name_col < len(row_str) else ""
+                if not name or name in ("合计", "价税合计", "小计", ""):
+                    continue
+                # 跳过包含"合计"的汇总行
+                if any(kw in name for kw in ("合计", "价税合计", "小计")):
+                    continue
+
+                # 提取税收分类名称（如 *成品油*汽油）
+                tax_name = None
+                m_tax = re.search(r"\*(.+?\*.+)", name)
+                if m_tax:
+                    tax_name = m_tax.group(0)
+
+                amount = self._parse_number(
+                    row_str[amount_col] if amount_col is not None and amount_col < len(row_str) else ""
+                )
+                quantity = self._parse_number(
+                    row_str[qty_col] if qty_col is not None and qty_col < len(row_str) else ""
+                )
+                unit = (
+                    row_str[unit_col] if unit_col is not None and unit_col < len(row_str) else None
+                ) or None
+                unit_price = self._parse_number(
+                    row_str[price_col] if price_col is not None and price_col < len(row_str) else ""
+                )
+                tax_code = (
+                    row_str[tax_code_col] if tax_code_col is not None and tax_code_col < len(row_str) else None
+                ) or None
+
+                lines.append(InvoiceLineItem(
+                    name=name,
+                    tax_classification_code=tax_code,
+                    tax_classification_name=tax_name,
+                    quantity=quantity if quantity and quantity > 0 else None,
+                    unit=unit if unit else None,
+                    unit_price=unit_price if unit_price and unit_price > 0 else None,
+                    amount=amount or 0.0,
+                ))
+
+        return lines
+
+    def _extract_lines_from_text(self, text: str) -> List[InvoiceLineItem]:
+        """当表格提取失败时，从全文正则提取明细行（兜底）"""
+        import re
+
+        lines = []
+        # 匹配 *类别*名称 + 金额 的模式
+        pattern = re.compile(
+            r"(\*[^*]+\*[^\s]+)\s+"
+            r"(?:(\d+(?:\.\d+)?)\s+)?"  # 数量（可选）
+            r"(?:([^\d\s]+)\s+)?"       # 单位（可选）
+            r"(?:(\d+(?:\.\d+)?)\s+)?"  # 单价（可选）
+            r"(\d+(?:\.\d+)?)"          # 金额
+        )
+        for m in pattern.finditer(text):
+            name = m.group(1).strip()
+            quantity = self._parse_number(m.group(2)) if m.group(2) else None
+            unit = m.group(3).strip() if m.group(3) else None
+            unit_price = self._parse_number(m.group(4)) if m.group(4) else None
+            amount = self._parse_number(m.group(5)) or 0.0
+            lines.append(InvoiceLineItem(
+                name=name,
+                tax_classification_name=name,
+                quantity=quantity if quantity and quantity > 0 else None,
+                unit=unit,
+                unit_price=unit_price if unit_price and unit_price > 0 else None,
+                amount=amount,
+            ))
+        return lines
+
+    @staticmethod
+    def _find_col_index(header: List[str], keywords: tuple) -> Union[int, None]:
+        """在表头中查找包含关键词的列索引"""
+        for i, h in enumerate(header):
+            for kw in keywords:
+                if kw in h:
+                    return i
+        return None
+
+    @staticmethod
+    def _parse_number(val: str) -> Union[float, None]:
+        """安全解析数值字符串"""
+        if not val:
+            return None
+        import re
+        cleaned = re.sub(r"[,，\s]", "", str(val).strip())
+        try:
+            return float(cleaned)
+        except (ValueError, TypeError):
+            return None
