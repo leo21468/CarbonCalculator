@@ -109,15 +109,15 @@ class CPCDNLPMatcher:
             if s < min_similarity:
                 break
             row = self._df.iloc[i]
-            # pandas Series doesn't have .get() method, use bracket notation with fallback
-            pid = row["product_id"] if "product_id" in row.index else row.get("产品ID", "") if "产品ID" in row.index else ""
-            pname = row["product_name"] if "product_name" in row.index else row.get("产品名称", "") if "产品名称" in row.index else ""
-            accounting = row["accounting_boundary"] if "accounting_boundary" in row.index else row.get("核算边界", "") if "核算边界" in row.index else ""
-            footprint = row["carbon_footprint"] if "carbon_footprint" in row.index else row.get("碳足迹", "") if "碳足迹" in row.index else ""
-            company = row["company_name"] if "company_name" in row.index else row.get("企业名称", "") if "企业名称" in row.index else ""
-            year = row["data_year"] if "data_year" in row.index else row.get("数据年份", "") if "数据年份" in row.index else ""
-            dtype = row["data_type"] if "data_type" in row.index else row.get("数据类型", "") if "数据类型" in row.index else ""
-            low_carbon = row["is_low_carbon"] if "is_low_carbon" in row.index else row.get("是否低碳", "") if "是否低碳" in row.index else ""
+            # pandas Series uses bracket notation for access
+            pid = row["product_id"] if "product_id" in row.index else (row["产品ID"] if "产品ID" in row.index else "")
+            pname = row["product_name"] if "product_name" in row.index else (row["产品名称"] if "产品名称" in row.index else "")
+            accounting = row["accounting_boundary"] if "accounting_boundary" in row.index else (row["核算边界"] if "核算边界" in row.index else "")
+            footprint = row["carbon_footprint"] if "carbon_footprint" in row.index else (row["碳足迹"] if "碳足迹" in row.index else "")
+            company = row["company_name"] if "company_name" in row.index else (row["企业名称"] if "企业名称" in row.index else "")
+            year = row["data_year"] if "data_year" in row.index else (row["数据年份"] if "数据年份" in row.index else "")
+            dtype = row["data_type"] if "data_type" in row.index else (row["数据类型"] if "数据类型" in row.index else "")
+            low_carbon = row["is_low_carbon"] if "is_low_carbon" in row.index else (row["是否低碳"] if "是否低碳" in row.index else "")
             results.append(
                 CPCDMatch(
                     product_id=str(pid),

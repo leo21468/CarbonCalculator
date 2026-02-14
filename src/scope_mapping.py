@@ -5,6 +5,8 @@
 from __future__ import annotations
 from pathlib import Path
 from typing import List, Optional, Tuple
+import pandas as pd
+import math
 
 from .models import Scope
 
@@ -22,15 +24,9 @@ _NAME_COL_NAMES = ("名称", "描述", "name", "货物或应税劳务名称")
 
 def _normalize_scope(val) -> Optional[Scope]:
     """将单元格值转为 Scope 枚举"""
-    import pandas as pd
-    import math
-    
-    # Use proper NaN checking instead of string comparison
-    if val is None:
+    # Use proper NaN checking
+    if val is None or pd.isna(val):
         return None
-    if isinstance(val, float):
-        if pd.isna(val) or math.isnan(val):
-            return None
     s = str(val).strip()
     for scope in Scope:
         if scope.value in s or s in scope.value or s == str(scope.value):
@@ -47,15 +43,9 @@ def _normalize_scope(val) -> Optional[Scope]:
 
 def _parse_exclude(val) -> List[str]:
     """解析排除关键词列：分号/逗号分隔"""
-    import pandas as pd
-    import math
-    
     # Use proper NaN checking
-    if val is None:
+    if val is None or pd.isna(val):
         return []
-    if isinstance(val, float):
-        if pd.isna(val) or math.isnan(val):
-            return []
     s = str(val).strip()
     if not s:
         return []
@@ -114,11 +104,7 @@ def _load_excel_mapping(path: Optional[Path] = None) -> List[Tuple[str, Scope, L
         if scope is None:
             continue
         tax_val = r.get(tax_col)
-        import pandas as pd
-        import math
-        if tax_val is None:
-            continue
-        if isinstance(tax_val, float) and (pd.isna(tax_val) or math.isnan(tax_val)):
+        if tax_val is None or pd.isna(tax_val):
             continue
         tax_code = str(tax_val).strip()
         if not tax_code:
