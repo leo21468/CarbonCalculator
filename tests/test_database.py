@@ -65,3 +65,38 @@ def test_find_by_name():
     found = find_by_name("办公纸")
     assert found is not None
     assert "办公纸" in found.product_name
+
+
+def test_add_and_list_invoice_categories():
+    from backend.database import (
+        add_invoice_categories_batch, list_invoice_categories,
+        get_invoice_category_stats, InvoiceCategoryRecord,
+    )
+
+    records = [
+        InvoiceCategoryRecord(
+            id=None, invoice_number="INV001",
+            line_name="电力*电费", scope="Scope 2",
+            match_type="keyword", amount=4000.0,
+            emission_kg=2919.5, tax_code=None,
+        ),
+        InvoiceCategoryRecord(
+            id=None, invoice_number="INV001",
+            line_name="办公用品", scope="Scope 3",
+            match_type="default", amount=11000.0,
+            emission_kg=1.65, tax_code=None,
+        ),
+    ]
+    ids = add_invoice_categories_batch(records)
+    assert len(ids) == 2
+
+    cats = list_invoice_categories()
+    assert len(cats) == 2
+    assert cats[0].line_name in ("电力*电费", "办公用品")
+
+    stats = get_invoice_category_stats()
+    assert "Scope 2" in stats
+    assert "Scope 3" in stats
+    assert stats["Scope 2"]["count"] == 1
+    assert stats["Scope 2"]["total_amount"] == 4000.0
+    assert stats["Scope 3"]["count"] == 1
