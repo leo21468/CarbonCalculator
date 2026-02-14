@@ -47,6 +47,12 @@ CarbonCalculator/
 │   ├── pipeline.py                # 端到端流水线
 │   └── cpcd_matcher.py            # NLP 匹配 CPCD 产品类别（jieba+TF-IDF）
 ├── cpcd_full_*.csv                # CPCD 产品碳足迹数据库
+├── backend/
+│   ├── app.py                     # FastAPI 后端
+│   ├── database.py                # SQLite 自定义数据
+│   └── carbon_utils.py            # 碳足迹解析与价格
+├── frontend/
+│   └── index.html                 # Agent 前端页面
 ├── examples/
 │   ├── run_pipeline_demo.py       # 从发票 dict 到碳利润表演示
 │   └── cpcd_match_demo.py         # CPCD NLP 匹配演示
@@ -61,7 +67,9 @@ CarbonCalculator/
 
 ```bash
 pip install -r requirements.txt
+python run_server.py   # 启动前后端，访问 http://localhost:8000
 python examples/run_pipeline_demo.py
+python -m pytest tests/ -v   # 运行测试
 ```
 
 ## 使用方式
@@ -89,6 +97,18 @@ out = pipeline.process_invoice_from_dict(invoice_data)
 # out["emission_results"] # 每行排放 kg
 # out["ledger_entries"]   # 碳账本分录
 # out["aggregate_kg"]     # 按 Scope 汇总
+```
+
+### 碳足迹 Agent 前后端
+
+启动服务后访问 http://localhost:8000：
+
+- **查询**：输入产品名称（如电力、汽油、鸡蛋），返回碳种类、二氧化碳当量及碳成本价格
+- **新增数据**：添加自定义产品碳足迹到 SQLite 数据库，后续查询优先匹配自定义数据
+- **自定义列表**：查看已添加的产品
+
+```bash
+python run_server.py
 ```
 
 ### CPCD NLP 匹配（agent 输入 → 产品类别）
