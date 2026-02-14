@@ -35,7 +35,12 @@ def fetch_market_price_cea() -> Optional[CarbonPriceQuote]:
         # price_el = soup.select_one(".close-price")  # 示例
         # if price_el: return CarbonPriceQuote(price_per_ton=float(price_el.text), source="market")
         return None
+    except (ImportError, ConnectionError, ValueError) as e:
+        # Handle specific exceptions: ImportError for missing libraries,
+        # ConnectionError for network issues, ValueError for parsing errors
+        return None
     except Exception:
+        # Catch-all for any other unexpected errors
         return None
 
 
