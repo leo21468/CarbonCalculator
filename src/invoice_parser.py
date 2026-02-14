@@ -37,6 +37,10 @@ def _seller_from_dict(d: dict) -> SellerInfo:
 
 
 def _line_from_dict(d: dict) -> InvoiceLineItem:
+    try:
+        amount = float(d.get("amount", 0))
+    except (ValueError, TypeError):
+        amount = 0.0
     return InvoiceLineItem(
         name=d.get("name", ""),
         tax_classification_code=d.get("tax_classification_code"),
@@ -44,7 +48,7 @@ def _line_from_dict(d: dict) -> InvoiceLineItem:
         quantity=d.get("quantity"),
         unit=d.get("unit"),
         unit_price=d.get("unit_price"),
-        amount=float(d.get("amount", 0)),
+        amount=amount,
         remark=d.get("remark"),
     )
 
@@ -62,14 +66,22 @@ class JsonXmlInvoiceParser(BaseInvoiceParser):
         import json
         if isinstance(source, (str, Path)):
             path = Path(source)
-            if path.suffix.lower() == ".json":
-                raw = json.loads(path.read_text(encoding="utf-8"))
-            else:
-                # 若为 XML，可在此用 lxml 解析为 dict，这里简化为期望已是 dict 形态
-                text = path.read_text(encoding="utf-8")
-                raw = self._xml_to_dict(text) if ".xml" in path.suffix.lower() else json.loads(text)
+            try:
+                if path.suffix.lower() == ".json":
+                    raw = json.loads(path.read_text(encoding="utf-8"))
+                else:
+                    # 若为 XML，可在此用 lxml 解析为 dict，这里简化为期望已是 dict 形态
+                    text = path.read_text(encoding="utf-8")
+                    raw = self._xml_to_dict(text) if ".xml" in path.suffix.lower() else json.loads(text)
+            except (FileNotFoundError, UnicodeDecodeError) as e:
+                raise ValueError(f"Cannot read invoice file: {e}")
+            except json.JSONDecodeError as e:
+                raise ValueError(f"Invalid JSON format: {e}")
         else:
-            raw = json.loads(source.decode("utf-8"))
+            try:
+                raw = json.loads(source.decode("utf-8"))
+            except (json.JSONDecodeError, UnicodeDecodeError) as e:
+                raise ValueError(f"Invalid source data: {e}")
 
         return self._build_invoice(raw)
 
@@ -79,7 +91,8 @@ class JsonXmlInvoiceParser(BaseInvoiceParser):
             import xml.etree.ElementTree as ET
             root = ET.fromstring(xml_text)
             return self._element_to_dict(root)
-        except Exception:
+        except ET.ParseError as e:
+            # Specific exception for XML parsing errors
             return {}
 
     def _element_to_dict(self, el) -> dict:

@@ -3,8 +3,6 @@
 混合策略：一级确定性匹配（税收编码）+ 关键词/语义（宽泛类目）。
 """
 from __future__ import annotations
-from typing import List, Optional
-
 from pathlib import Path
 from typing import List, Optional
 

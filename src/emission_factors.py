@@ -20,7 +20,7 @@ def load_emission_factors() -> Dict[str, dict]:
         return result
     with open(p, encoding="utf-8") as f:
         lines = f.readlines()
-    if not lines:
+    if not lines or len(lines) < 2:
         return result
     headers = [h.strip() for h in lines[0].split(",")]
     for line in lines[1:]:
@@ -31,10 +31,15 @@ def load_emission_factors() -> Dict[str, dict]:
         if len(parts) < 4:
             continue
         fid = parts[0]
+        try:
+            kg_co2e = float(parts[3])
+        except (ValueError, TypeError):
+            # Skip invalid rows with non-numeric emission factors
+            continue
         result[fid] = {
             "scope": parts[1],
             "unit": parts[2],
-            "kg_co2e_per_unit": float(parts[3]),
+            "kg_co2e_per_unit": kg_co2e,
             "description": parts[4] if len(parts) > 4 else "",
         }
     return result
