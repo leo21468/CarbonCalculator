@@ -44,9 +44,12 @@ CarbonCalculator/
 │   ├── carbon_ledger.py           # 碳利润表、双账本、成本归集
 │   ├── carbon_price_fetcher.py    # 碳价抓取占位（上海交易所）
 │   ├── insights.py                # 产品线伪利润、供应链议价分析
-│   └── pipeline.py                # 端到端流水线
+│   ├── pipeline.py                # 端到端流水线
+│   └── cpcd_matcher.py            # NLP 匹配 CPCD 产品类别（jieba+TF-IDF）
+├── cpcd_full_*.csv                # CPCD 产品碳足迹数据库
 ├── examples/
-│   └── run_pipeline_demo.py       # 从发票 dict 到碳利润表演示
+│   ├── run_pipeline_demo.py       # 从发票 dict 到碳利润表演示
+│   └── cpcd_match_demo.py         # CPCD NLP 匹配演示
 ├── requirements.txt
 └── README.md
 ```
@@ -54,7 +57,7 @@ CarbonCalculator/
 ## 依赖与运行
 
 - Python 3.9+
-- 核心依赖：`PyYAML`、`pandas`、`openpyxl`（reference table.xlsx 读取）；可选：`numpy`、发票解析库、`requests`/`beautifulsoup4`（碳价抓取）
+- 核心依赖：`PyYAML`、`pandas`、`openpyxl`、`jieba`、`scikit-learn`（CPCD NLP 匹配）；可选：`numpy`、发票解析库、`requests`/`beautifulsoup4`（碳价抓取）
 
 ```bash
 pip install -r requirements.txt
@@ -87,6 +90,20 @@ out = pipeline.process_invoice_from_dict(invoice_data)
 # out["ledger_entries"]   # 碳账本分录
 # out["aggregate_kg"]     # 按 Scope 汇总
 ```
+
+### CPCD NLP 匹配（agent 输入 → 产品类别）
+
+将用户输入文本与 `cpcd_full_*.csv` 中的产品名称进行语义匹配，返回最相似的产品及其碳足迹：
+
+```python
+from src.cpcd_matcher import CPCDNLPMatcher, CPCDMatch
+
+matcher = CPCDNLPMatcher()  # 默认加载 cpcd_full_20260213_164705.csv
+for m in matcher.match("电力", top_k=3):
+    print(f"{m.similarity:.3f} | {m.product_name} | {m.carbon_footprint}")
+```
+
+或命令行：`python -m src.cpcd_matcher 电力`
 
 ### 碳利润表
 
