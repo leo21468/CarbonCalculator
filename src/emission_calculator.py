@@ -50,7 +50,9 @@ class EmissionCalculator:
 
         # 活动数据法：有数量且单位可映射
         if line.quantity is not None and line.quantity > 0 and line.unit:
-            normalized_unit = UNIT_NORMALIZE.get(line.unit.strip(), line.unit.strip())
+            # Guard against None before calling strip()
+            unit_str = str(line.unit).strip() if line.unit else ""
+            normalized_unit = UNIT_NORMALIZE.get(unit_str, unit_str)
             if normalized_unit == unit:
                 emission_kg = line.quantity * kg_per_unit
                 return EmissionResult(

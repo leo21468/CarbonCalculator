@@ -22,8 +22,15 @@ _NAME_COL_NAMES = ("名称", "描述", "name", "货物或应税劳务名称")
 
 def _normalize_scope(val) -> Optional[Scope]:
     """将单元格值转为 Scope 枚举"""
-    if val is None or (isinstance(val, float) and str(val) == "nan"):
+    import pandas as pd
+    import math
+    
+    # Use proper NaN checking instead of string comparison
+    if val is None:
         return None
+    if isinstance(val, float):
+        if pd.isna(val) or math.isnan(val):
+            return None
     s = str(val).strip()
     for scope in Scope:
         if scope.value in s or s in scope.value or s == str(scope.value):
@@ -40,8 +47,15 @@ def _normalize_scope(val) -> Optional[Scope]:
 
 def _parse_exclude(val) -> List[str]:
     """解析排除关键词列：分号/逗号分隔"""
-    if val is None or (isinstance(val, float) and str(val) == "nan"):
+    import pandas as pd
+    import math
+    
+    # Use proper NaN checking
+    if val is None:
         return []
+    if isinstance(val, float):
+        if pd.isna(val) or math.isnan(val):
+            return []
     s = str(val).strip()
     if not s:
         return []
@@ -88,7 +102,11 @@ def _load_excel_mapping(path: Optional[Path] = None) -> List[Tuple[str, Scope, L
     if not scope_col:
         scope_col = df.columns[1] if len(df.columns) > 1 else None
     if not tax_col:
-        tax_col = df.columns[0]
+        tax_col = df.columns[0] if len(df.columns) > 0 else None
+    
+    # Cannot proceed without required columns
+    if not scope_col or not tax_col:
+        return []
 
     rows = []
     for _, r in df.iterrows():
@@ -96,7 +114,11 @@ def _load_excel_mapping(path: Optional[Path] = None) -> List[Tuple[str, Scope, L
         if scope is None:
             continue
         tax_val = r.get(tax_col)
-        if tax_val is None or (isinstance(tax_val, float) and str(tax_val) == "nan"):
+        import pandas as pd
+        import math
+        if tax_val is None:
+            continue
+        if isinstance(tax_val, float) and (pd.isna(tax_val) or math.isnan(tax_val)):
             continue
         tax_code = str(tax_val).strip()
         if not tax_code:
@@ -117,7 +139,8 @@ def _load_csv_mapping() -> List[Tuple[str, Scope, str, List[str], str]]:
         return rows
     with open(p, encoding="utf-8") as f:
         lines = f.readlines()
-    if not lines:
+    # Check if file has enough lines (header + at least one data row)
+    if not lines or len(lines) < 2:
         return rows
     for line in lines[1:]:
         line = line.strip()

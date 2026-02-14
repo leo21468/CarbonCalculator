@@ -57,6 +57,9 @@ def product_line_insights(
         carbon_cost = pl.get("carbon_cost", 0) or 0
         if revenue <= 0:
             continue
+        # Guard against division by zero - revenue is checked above but adding safety
+        if revenue == 0:
+            continue
         gross_pct = (revenue - cost) / revenue * 100
         carbon_adj_pct = (revenue - cost - carbon_cost) / revenue * 100
         is_pseudo = identify_pseudo_profit(gross_pct, carbon_adj_pct)
