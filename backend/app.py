@@ -16,10 +16,15 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from backend.carbon_utils import parse_carbon_footprint, carbon_cost_cny
-from backend.database import add_product, list_products, find_by_name, CustomProduct
+from backend.database import (
+    add_product, list_products, find_by_name, CustomProduct,
+    add_invoice_categories_batch, list_invoice_categories,
+    get_invoice_category_stats, InvoiceCategoryRecord,
+)
 
 # 延迟导入 CPCD matcher（避免启动时加载大 CSV）
 _cpcd_matcher = None
+_pipeline = None
 _CARBON_PRICE = 100.0  # 元/吨
 
 
@@ -30,6 +35,18 @@ def _get_matcher():
         _cpcd_matcher = CPCDNLPMatcher()
         _cpcd_matcher.load()
     return _cpcd_matcher
+
+
+def _get_pipeline():
+    global _pipeline
+    if _pipeline is None:
+        from src.pipeline import CarbonAccountingPipeline
+        from src.config import AppConfig, CarbonPriceConfig
+        config = AppConfig(
+            carbon_price=CarbonPriceConfig(source="internal", price_per_ton=_CARBON_PRICE),
+        )
+        _pipeline = CarbonAccountingPipeline(config=config)
+    return _pipeline
 
 
 app = FastAPI(title="碳足迹 Agent API")
@@ -49,6 +66,29 @@ class ProductAddRequest(BaseModel):
     unit: str
     price_per_ton: float = 100.0
     remark: str = ""
+
+
+class InvoiceLineRequest(BaseModel):
+    name: str
+    tax_classification_code: Optional[str] = None
+    tax_classification_name: Optional[str] = None
+    quantity: Optional[float] = None
+    unit: Optional[str] = None
+    unit_price: Optional[float] = None
+    amount: float = 0.0
+    remark: Optional[str] = None
+
+
+class SellerRequest(BaseModel):
+    name: str
+    tax_id: Optional[str] = None
+    address: Optional[str] = None
+
+
+class InvoiceUploadRequest(BaseModel):
+    invoice_number: Optional[str] = None
+    lines: List[InvoiceLineRequest]
+    seller: Optional[SellerRequest] = None
 
 
 # ---------- 静态文件 ----------
@@ -147,6 +187,99 @@ def create_product(req: ProductAddRequest):
         raise HTTPException(status_code=400, detail="产品名称不能为空")
     pid = add_product(p)
     return {"id": pid, "message": "添加成功"}
+
+
+@app.post("/api/invoice/upload")
+def upload_invoice(req: InvoiceUploadRequest):
+    """
+    上传发票数据，分类发票明细行并记录类别统计到数据库。
+    返回分类结果及排放核算摘要。
+    """
+    if not req.lines:
+        raise HTTPException(status_code=400, detail="发票明细不能为空")
+
+    # 构建 pipeline 输入 dict
+    invoice_dict = {
+        "invoice_number": req.invoice_number,
+        "lines": [line.model_dump() for line in req.lines],
+    }
+    if req.seller:
+        invoice_dict["seller"] = req.seller.model_dump()
+
+    pipeline = _get_pipeline()
+    result = pipeline.process_invoice_from_dict(invoice_dict, ref_invoice_id=req.invoice_number)
+
+    classified = result.get("classified", [])
+    emission_results = result.get("emission_results", [])
+
+    # 构建 emission_kg 映射（按行索引）
+    emission_map = {}
+    for i, er in enumerate(emission_results):
+        emission_map[i] = er.emission_kg
+
+    # 将分类结果存入数据库
+    records = []
+    for i, cl in enumerate(classified):
+        records.append(InvoiceCategoryRecord(
+            id=None,
+            invoice_number=req.invoice_number,
+            line_name=cl.line.name,
+            scope=cl.scope.value,
+            match_type=cl.match_type,
+            amount=cl.line.amount,
+            emission_kg=emission_map.get(i, 0.0),
+            tax_code=cl.matched_tax_code,
+        ))
+    if records:
+        add_invoice_categories_batch(records)
+
+    # 构建响应
+    aggregate = result.get("aggregate_kg", {})
+    lines_result = []
+    for i, cl in enumerate(classified):
+        lines_result.append({
+            "name": cl.line.name,
+            "scope": cl.scope.value,
+            "match_type": cl.match_type,
+            "amount": cl.line.amount,
+            "emission_kg": round(emission_map.get(i, 0.0), 4),
+            "tax_code": cl.matched_tax_code,
+        })
+
+    return {
+        "message": f"发票处理完成，共 {len(classified)} 条明细",
+        "lines": lines_result,
+        "aggregate": {
+            scope.value: round(kg, 4)
+            for scope, kg in aggregate.items()
+        },
+    }
+
+
+@app.get("/api/invoice/categories")
+def get_invoice_categories():
+    """列出所有发票类别记录"""
+    records = list_invoice_categories()
+    return [
+        {
+            "id": r.id,
+            "invoice_number": r.invoice_number,
+            "line_name": r.line_name,
+            "scope": r.scope,
+            "match_type": r.match_type,
+            "amount": r.amount,
+            "emission_kg": r.emission_kg,
+            "tax_code": r.tax_code,
+            "created_at": r.created_at,
+        }
+        for r in records
+    ]
+
+
+@app.get("/api/invoice/stats")
+def get_invoice_stats():
+    """按 Scope 汇总发票类别统计"""
+    return get_invoice_category_stats()
 
 
 if __name__ == "__main__":

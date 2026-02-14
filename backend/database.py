@@ -1,11 +1,11 @@
 """
-后端数据库：SQLite 存储用户新增的产品碳足迹数据。
+后端数据库：SQLite 存储用户新增的产品碳足迹数据及发票类别统计。
 """
 from __future__ import annotations
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 _ROOT = Path(__file__).resolve().parents[1]
 _DB_PATH = _ROOT / "carbon_data.db"
@@ -24,6 +24,20 @@ class CustomProduct:
     remark: str = ""
 
 
+@dataclass
+class InvoiceCategoryRecord:
+    """发票类别统计记录"""
+    id: Optional[int]
+    invoice_number: Optional[str]
+    line_name: str  # 发票明细行名称
+    scope: str  # Scope 1 / Scope 2 / Scope 3
+    match_type: str  # tax_code / keyword / default
+    amount: float  # 金额（元）
+    emission_kg: float  # 排放量 kgCO2e
+    tax_code: Optional[str] = None
+    created_at: Optional[str] = None
+
+
 def _init_db(conn: sqlite3.Connection) -> None:
     conn.execute("""
         CREATE TABLE IF NOT EXISTS custom_products (
@@ -35,6 +49,19 @@ def _init_db(conn: sqlite3.Connection) -> None:
             unit TEXT NOT NULL,
             price_per_ton REAL DEFAULT 100,
             remark TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS invoice_categories (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            invoice_number TEXT,
+            line_name TEXT NOT NULL,
+            scope TEXT NOT NULL,
+            match_type TEXT NOT NULL,
+            amount REAL NOT NULL DEFAULT 0,
+            emission_kg REAL NOT NULL DEFAULT 0,
+            tax_code TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
@@ -106,5 +133,97 @@ def find_by_name(product_name: str) -> Optional[CustomProduct]:
             price_per_ton=r["price_per_ton"],
             remark=r["remark"] or "",
         )
+    finally:
+        conn.close()
+
+
+# ---------- 发票类别统计 ----------
+
+
+def add_invoice_category(record: InvoiceCategoryRecord) -> int:
+    """新增发票类别记录，返回 id"""
+    conn = get_connection()
+    try:
+        cur = conn.execute(
+            """INSERT INTO invoice_categories
+               (invoice_number, line_name, scope, match_type, amount, emission_kg, tax_code)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (record.invoice_number, record.line_name, record.scope,
+             record.match_type, record.amount, record.emission_kg, record.tax_code),
+        )
+        conn.commit()
+        return cur.lastrowid
+    finally:
+        conn.close()
+
+
+def add_invoice_categories_batch(records: List[InvoiceCategoryRecord]) -> List[int]:
+    """批量新增发票类别记录"""
+    conn = get_connection()
+    try:
+        ids = []
+        for rec in records:
+            cur = conn.execute(
+                """INSERT INTO invoice_categories
+                   (invoice_number, line_name, scope, match_type, amount, emission_kg, tax_code)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (rec.invoice_number, rec.line_name, rec.scope,
+                 rec.match_type, rec.amount, rec.emission_kg, rec.tax_code),
+            )
+            ids.append(cur.lastrowid)
+        conn.commit()
+        return ids
+    finally:
+        conn.close()
+
+
+def list_invoice_categories() -> List[InvoiceCategoryRecord]:
+    """列出所有发票类别记录"""
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            """SELECT id, invoice_number, line_name, scope, match_type,
+                      amount, emission_kg, tax_code, created_at
+               FROM invoice_categories ORDER BY id DESC"""
+        ).fetchall()
+        return [
+            InvoiceCategoryRecord(
+                id=r["id"],
+                invoice_number=r["invoice_number"],
+                line_name=r["line_name"],
+                scope=r["scope"],
+                match_type=r["match_type"],
+                amount=r["amount"],
+                emission_kg=r["emission_kg"],
+                tax_code=r["tax_code"],
+                created_at=r["created_at"],
+            )
+            for r in rows
+        ]
+    finally:
+        conn.close()
+
+
+def get_invoice_category_stats() -> Dict[str, dict]:
+    """按 Scope 汇总发票类别统计：总金额、总排放量、条目数"""
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            """SELECT scope,
+                      COUNT(*) as count,
+                      COALESCE(SUM(amount), 0) as total_amount,
+                      COALESCE(SUM(emission_kg), 0) as total_emission_kg
+               FROM invoice_categories
+               GROUP BY scope
+               ORDER BY scope"""
+        ).fetchall()
+        return {
+            r["scope"]: {
+                "count": r["count"],
+                "total_amount": round(r["total_amount"], 2),
+                "total_emission_kg": round(r["total_emission_kg"], 4),
+            }
+            for r in rows
+        }
     finally:
         conn.close()

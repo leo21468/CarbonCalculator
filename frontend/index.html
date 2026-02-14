@@ -129,6 +129,58 @@
       border-bottom: 1px solid var(--border);
       font-size: 0.9rem;
     }
+    .invoice-lines { margin-bottom: 1rem; }
+    .invoice-line {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.75rem;
+      margin-bottom: 0.5rem;
+    }
+    .invoice-line .form-row { margin-bottom: 0.5rem; }
+    .invoice-line .form-row:last-child { margin-bottom: 0; }
+    .remove-line {
+      background: transparent;
+      color: #f85149;
+      border: 1px solid #f85149;
+      padding: 0.3rem 0.6rem;
+      font-size: 0.8rem;
+    }
+    .scope-tag {
+      display: inline-block;
+      padding: 0.2rem 0.5rem;
+      border-radius: 4px;
+      font-size: 0.75rem;
+    }
+    .scope-tag.scope1 { background: rgba(248,81,73,0.2); color: #f85149; }
+    .scope-tag.scope2 { background: rgba(210,153,34,0.2); color: #d29922; }
+    .scope-tag.scope3 { background: rgba(88,166,255,0.2); color: var(--accent); }
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 0.75rem;
+      margin-bottom: 1rem;
+    }
+    .stat-card {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1rem;
+      text-align: center;
+    }
+    .stat-card .label { color: var(--muted); font-size: 0.8rem; margin-bottom: 0.3rem; }
+    .stat-card .value { color: var(--success); font-size: 1.3rem; font-weight: 600; }
+    .category-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.85rem;
+    }
+    .category-table th, .category-table td {
+      padding: 0.5rem;
+      border-bottom: 1px solid var(--border);
+      text-align: left;
+    }
+    .category-table th { color: var(--muted); font-weight: 500; }
   </style>
 </head>
 <body>
@@ -138,6 +190,8 @@
 
     <div class="tabs">
       <button type="button" class="active" data-tab="query">查询</button>
+      <button type="button" data-tab="invoice">发票上传</button>
+      <button type="button" data-tab="stats">统计</button>
       <button type="button" data-tab="add">新增数据</button>
       <button type="button" data-tab="list">自定义列表</button>
     </div>
@@ -199,6 +253,39 @@
         <div class="product-list" id="productList">加载中...</div>
       </div>
     </div>
+
+    <!-- 发票上传面板 -->
+    <div class="panel" id="panel-invoice">
+      <div class="card">
+        <form class="add-form" id="invoiceForm">
+          <div class="row">
+            <label>发票号码（可选）</label>
+            <input type="text" id="invoiceNumber" placeholder="如：12345678">
+          </div>
+          <div class="row">
+            <label>销方名称（可选）</label>
+            <input type="text" id="sellerName" placeholder="如：国网上海">
+          </div>
+          <label style="color:var(--muted);font-size:0.85rem;">发票明细行</label>
+          <div class="invoice-lines" id="invoiceLines"></div>
+          <div class="form-row">
+            <button type="button" class="secondary" id="btnAddLine">+ 添加明细行</button>
+            <button type="submit" id="btnUpload" style="min-width:120px;">上传并分类</button>
+          </div>
+        </form>
+        <div id="invoiceResult" class="result"></div>
+      </div>
+    </div>
+
+    <!-- 统计面板 -->
+    <div class="panel" id="panel-stats">
+      <div class="card">
+        <h3 style="margin-top:0;font-size:1.1rem;">发票类别统计</h3>
+        <div class="stats-grid" id="statsGrid">加载中...</div>
+        <h3 style="font-size:1.1rem;">类别明细记录</h3>
+        <div style="max-height:300px;overflow-y:auto;" id="categoryList">加载中...</div>
+      </div>
+    </div>
   </div>
 
   <script>
@@ -210,6 +297,9 @@
     const addForm = $('addForm');
     const addMsg = $('addMsg');
     const productList = $('productList');
+    const invoiceForm = $('invoiceForm');
+    const invoiceLines = $('invoiceLines');
+    const invoiceResult = $('invoiceResult');
 
     function showResult(data) {
       if (data.source === 'none') {
@@ -294,6 +384,140 @@
       }
     }
 
+    /* ---------- 发票上传 ---------- */
+    let lineIndex = 0;
+
+    function addInvoiceLine() {
+      const idx = lineIndex++;
+      const div = document.createElement('div');
+      div.className = 'invoice-line';
+      div.dataset.idx = idx;
+      div.innerHTML = `
+        <div class="form-row">
+          <input type="text" placeholder="名称 *（如：电力*电费*）" data-field="name" required style="flex:2">
+          <input type="number" placeholder="金额（元）" data-field="amount" step="0.01" style="flex:1">
+          <button type="button" class="remove-line" onclick="this.closest('.invoice-line').remove()">✕</button>
+        </div>
+        <div class="form-row">
+          <input type="text" placeholder="税收分类编码（19位，可选）" data-field="tax_classification_code" style="flex:2">
+          <input type="number" placeholder="数量" data-field="quantity" step="0.01" style="flex:1">
+          <input type="text" placeholder="单位（如：度）" data-field="unit" style="flex:1">
+        </div>`;
+      invoiceLines.appendChild(div);
+    }
+
+    $('btnAddLine').addEventListener('click', addInvoiceLine);
+    addInvoiceLine();
+
+    invoiceForm.addEventListener('submit', async e => {
+      e.preventDefault();
+      const lineDivs = invoiceLines.querySelectorAll('.invoice-line');
+      const lines = [];
+      for (const div of lineDivs) {
+        const name = div.querySelector('[data-field="name"]').value.trim();
+        if (!name) continue;
+        const amount = parseFloat(div.querySelector('[data-field="amount"]').value) || 0;
+        const taxCode = div.querySelector('[data-field="tax_classification_code"]').value.trim() || null;
+        const quantity = parseFloat(div.querySelector('[data-field="quantity"]').value) || null;
+        const unit = div.querySelector('[data-field="unit"]').value.trim() || null;
+        lines.push({ name, amount, tax_classification_code: taxCode, quantity, unit });
+      }
+      if (!lines.length) {
+        invoiceResult.innerHTML = '<p class="error">请至少填写一条明细行</p>';
+        return;
+      }
+      const body = {
+        invoice_number: $('invoiceNumber').value.trim() || null,
+        lines,
+      };
+      const sellerName = $('sellerName').value.trim();
+      if (sellerName) body.seller = { name: sellerName };
+
+      $('btnUpload').disabled = true;
+      invoiceResult.innerHTML = '处理中...';
+      try {
+        const res = await fetch(API + '/api/invoice/upload', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || '上传失败');
+        showInvoiceResult(data);
+      } catch (e) {
+        invoiceResult.innerHTML = `<p class="error">${e.message}</p>`;
+      } finally {
+        $('btnUpload').disabled = false;
+      }
+    });
+
+    function scopeClass(scope) {
+      if (scope.includes('1')) return 'scope1';
+      if (scope.includes('2')) return 'scope2';
+      return 'scope3';
+    }
+
+    function showInvoiceResult(data) {
+      let html = `<p class="v" style="margin-bottom:0.75rem;">✓ ${data.message}</p>`;
+      if (data.aggregate) {
+        html += '<div class="stats-grid">';
+        for (const [scope, kg] of Object.entries(data.aggregate)) {
+          html += `<div class="stat-card"><div class="label">${scope}</div><div class="value">${kg} kg</div></div>`;
+        }
+        html += '</div>';
+      }
+      if (data.lines && data.lines.length) {
+        html += '<table class="category-table"><tr><th>名称</th><th>范围</th><th>匹配方式</th><th>金额</th><th>排放(kg)</th></tr>';
+        for (const l of data.lines) {
+          html += `<tr><td>${l.name}</td><td><span class="scope-tag ${scopeClass(l.scope)}">${l.scope}</span></td><td>${l.match_type}</td><td>¥${l.amount}</td><td>${l.emission_kg}</td></tr>`;
+        }
+        html += '</table>';
+      }
+      invoiceResult.innerHTML = html;
+    }
+
+    /* ---------- 统计 ---------- */
+    async function loadStats() {
+      const statsGrid = $('statsGrid');
+      const categoryList = $('categoryList');
+      try {
+        const [statsRes, catRes] = await Promise.all([
+          fetch(API + '/api/invoice/stats'),
+          fetch(API + '/api/invoice/categories'),
+        ]);
+        const stats = await statsRes.json();
+        const categories = await catRes.json();
+
+        if (Object.keys(stats).length) {
+          let totalCount = 0, totalAmount = 0, totalEmission = 0;
+          let cardsHtml = '';
+          for (const [scope, s] of Object.entries(stats)) {
+            totalCount += s.count;
+            totalAmount += s.total_amount;
+            totalEmission += s.total_emission_kg;
+            cardsHtml += `<div class="stat-card"><div class="label">${scope}</div><div class="value">${s.count} 条</div><div style="color:var(--muted);font-size:0.8rem;">¥${s.total_amount} | ${s.total_emission_kg} kg</div></div>`;
+          }
+          statsGrid.innerHTML = `<div class="stat-card"><div class="label">总计</div><div class="value">${totalCount} 条</div><div style="color:var(--muted);font-size:0.8rem;">¥${totalAmount.toFixed(2)} | ${totalEmission.toFixed(4)} kg</div></div>` + cardsHtml;
+        } else {
+          statsGrid.innerHTML = '<p style="color:var(--muted)">暂无统计数据，请先上传发票</p>';
+        }
+
+        if (categories.length) {
+          let tbl = '<table class="category-table"><tr><th>发票号</th><th>名称</th><th>范围</th><th>匹配</th><th>金额</th><th>排放(kg)</th><th>时间</th></tr>';
+          for (const c of categories) {
+            tbl += `<tr><td>${c.invoice_number || '-'}</td><td>${c.line_name}</td><td><span class="scope-tag ${scopeClass(c.scope)}">${c.scope}</span></td><td>${c.match_type}</td><td>¥${c.amount}</td><td>${c.emission_kg}</td><td>${c.created_at || '-'}</td></tr>`;
+          }
+          tbl += '</table>';
+          categoryList.innerHTML = tbl;
+        } else {
+          categoryList.innerHTML = '<p style="color:var(--muted)">暂无类别记录</p>';
+        }
+      } catch {
+        statsGrid.innerHTML = '加载失败';
+        categoryList.innerHTML = '';
+      }
+    }
+
     document.querySelectorAll('.tabs button').forEach(btn => {
       btn.addEventListener('click', () => {
         document.querySelectorAll('.tabs button').forEach(b => b.classList.remove('active'));
@@ -301,6 +525,7 @@
         btn.classList.add('active');
         $('panel-' + btn.dataset.tab).classList.add('show');
         if (btn.dataset.tab === 'list') loadProductList();
+        if (btn.dataset.tab === 'stats') loadStats();
       });
     });
 
