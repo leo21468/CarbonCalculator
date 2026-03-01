@@ -5,17 +5,19 @@
 ## 功能概览
 
 1. **第一步：数据采集 — 发票结构化提取**  
-   从电子发票（OFD/PDF/XML）或 API 返回的 JSON 中提取：货物或应税劳务名称、商品和服务税收分类编码（19 位）、金额/单价/数量、销方信息。
+   - **Python 侧**：从 API 返回的 JSON/XML 或 dict 中解析发票行（货物名称、19 位税收分类编码、金额/数量/单位、销方信息）。  
+   - **Node 侧（invoice-parser）**：支持 OFD/PDF/XML/JSON 四种格式的电子发票解析，提取 19 位税号及票面关键字段；可选 BERT + 关键词做货物名称分类。
 
 2. **第二步：按排放范围分类**  
    - 按中国税收分类编码与 GHG Protocol 映射至 Scope 1（直接燃料）/ Scope 2（电热冷）/ Scope 3（其他商品与服务）。  
    - 支持排除规则（如石油加工类中的沥青、蜡、碳黑、润滑油归 Scope 3）。  
-   - 租赁默认 Scope 3；服务/劳务一刀切 Scope 3。  
-   - 关键词与可选语义（NLP/LLM）扩展，用于宽泛类目。
+   - 租赁默认 Scope 3；服务/劳务归 Scope 3。  
+   - 关键词与可选语义（NLP/LLM）扩展。
 
 3. **第三步：排放量化**  
-   - **活动数据法**：有数量+单位时，E = 活动数据 × 排放因子。  
-   - **EEIO**：仅金额时，按金额 × 排放强度（kg/元）。
+   - **活动数据法**：有数量+单位时，E = 活动数据 × 排放因子（电力/燃料/材料等）。  
+   - **EEIO 支出法**：仅金额时，E = 金额 × 排放强度（kgCO2e/元）。  
+   - **invoice-parser** 提供动态因子匹配（物理因子 / 行业 EEIO / 默认因子）、区域电网映射与双模式核算，输出总排放及 scope1/2/3 汇总。
 
 4. **第四步：碳利润表与双账本**  
    - 碳价：支持市场价（如上海环境能源交易所 CEA）或内部设定价。  
@@ -28,55 +30,90 @@
 
 ```
 CarbonCalculator/
-├── reference table.xlsx           # 税收分类编码→排放范围映射表（可导入 SQLite 后由程序优先读 DB）
-├── data/
-│   ├── reference_table.db         # （可选）由脚本从 xlsx 导入的 SQLite，避免重复解析大 xlsx
-│   ├── reference_schema.sql       # 参考表 DB 建表语句
-│   ├── tax_code_to_scope.csv      # 税号前缀 → Scope 简表（回退）
-│   ├── scope_mapping_rules.yaml   # 详细映射与排除/关键词规则（回退 + 关键词）
-│   └── emission_factors.csv       # 排放因子表（19位税号→因子）
-├── src/
-│   ├── config.py                  # 碳价、排放因子等配置
-│   ├── models.py                  # 发票、Scope、碳账本、碳利润表数据模型
-│   ├── invoice_parser.py          # 发票解析接口（JSON/XML/dict）
-│   ├── scope_mapping.py           # 税收编码→Scope 映射表与查询
-│   ├── classifier.py              # 发票明细→Scope 分类（规则+关键词）
-│   ├── emission_factors.py        # 排放因子加载
-│   ├── emission_calculator.py     # 活动数据法 + EEIO
-│   ├── carbon_ledger.py           # 碳利润表、双账本、成本归集
-│   ├── carbon_price_fetcher.py    # 碳价抓取占位（上海交易所）
-│   ├── insights.py                # 产品线伪利润、供应链议价分析
-│   ├── pipeline.py                # 端到端流水线
-│   └── cpcd_matcher.py            # NLP 匹配 CPCD 产品类别（jieba+TF-IDF）
-├── cpcd_full_*.csv                # CPCD 产品碳足迹数据库
-├── backend/
-│   ├── app.py                     # FastAPI 后端
-│   ├── database.py                # SQLite 自定义数据
-│   └── carbon_utils.py            # 碳足迹解析与价格
-├── frontend/
-│   └── index.html                 # Agent 前端页面
-├── examples/
-│   ├── run_pipeline_demo.py       # 从发票 dict 到碳利润表演示
-│   └── cpcd_match_demo.py         # CPCD NLP 匹配演示
+├── README.md
 ├── requirements.txt
-└── README.md
+├── run_server.py                 # 启动碳足迹 Agent 前后端（FastAPI + 前端）
+├── reference table.xlsx           # 税收分类编码→排放范围映射表（可导入 SQLite）
+├── Emission factors.csv           # CPCD 电网等排放因子（invoice-parser 可读）
+├── data/
+│   ├── reference_table.db        # （可选）由脚本从 xlsx 导入的 SQLite
+│   ├── reference_schema.sql
+│   ├── tax_code_to_scope.csv
+│   ├── scope_mapping_rules.yaml
+│   └── emission_factors.csv
+├── src/                          # Python 核心
+│   ├── config.py
+│   ├── models.py
+│   ├── invoice_parser.py         # 发票解析接口（JSON/XML/dict）
+│   ├── scope_mapping.py          # 税收编码→Scope（优先 DB）
+│   ├── classifier.py
+│   ├── emission_factors.py
+│   ├── emission_calculator.py    # 活动数据法 + EEIO
+│   ├── carbon_ledger.py          # 碳利润表、双账本
+│   ├── carbon_price_fetcher.py
+│   ├── insights.py
+│   ├── pipeline.py               # 端到端流水线
+│   └── cpcd_matcher.py           # CPCD 产品匹配（jieba+TF-IDF）
+├── backend/
+│   ├── app.py                    # FastAPI 后端
+│   ├── database.py
+│   └── carbon_utils.py
+├── frontend/
+│   └── index.html                # Agent 前端
+├── invoice-parser/               # Node.js 发票解析与碳核算子项目
+│   ├── README.md
+│   ├── package.json
+│   └── src/
+│       ├── parser/               # OFD/PDF/XML/JSON 解析
+│       ├── mapping/              # 税号→Scope
+│       ├── nlp/                  # 关键词、模糊匹配、BERT 分类
+│       ├── factors/              # 排放因子库（电力/燃料/EEIO）
+│       ├── matching/             # 动态因子匹配、置信度、区域电网
+│       ├── calculation/          # 活动数据法 + 支出法、批量核算
+│       └── models/               # Invoice、EmissionResult
+├── scripts/
+│   └── import_reference_table_to_db.py   # xlsx → SQLite
+├── examples/
+│   ├── run_pipeline_demo.py
+│   └── cpcd_match_demo.py
+└── tests/
 ```
 
 ## 依赖与运行
 
+### Python（主流程、后端、碳利润表）
+
 - Python 3.9+
-- 核心依赖：`PyYAML`、`pandas`、`openpyxl`、`jieba`、`scikit-learn`（CPCD NLP 匹配）；可选：`numpy`、发票解析库、`requests`/`beautifulsoup4`（碳价抓取）
+- 依赖：`PyYAML`、`pandas`、`openpyxl`、`jieba`、`scikit-learn` 等（见 `requirements.txt`）
 
 ```bash
 pip install -r requirements.txt
-python run_server.py   # 启动前后端，访问 http://localhost:8000
+python run_server.py              # 启动前后端，访问 http://localhost:8000
 python examples/run_pipeline_demo.py
-python -m pytest tests/ -v   # 运行测试
+python -m pytest tests/ -v
 ```
+
+### Node.js（invoice-parser：多格式发票解析 + 因子匹配 + 核算）
+
+- Node.js 16+
+- 用于 OFD/PDF/XML/JSON 解析、动态因子匹配、双模式核算（活动法/EEIO）。可与 Python 流水线配合：先由 invoice-parser 解析并算出排放，再将结果以 JSON 形式交给 Python 做碳利润表；也可单独使用。
+
+```bash
+cd invoice-parser
+npm install
+npm test
+npm run test:mapping              # 税号→Scope
+npm run test:factors              # 排放因子
+npm run test:matching             # 因子匹配
+npm run demo:matching             # 匹配演示
+npm run test:calculation          # 双模式核算
+```
+
+详见 [invoice-parser/README.md](invoice-parser/README.md)。
 
 ## 使用方式
 
-### 从 API 解析后的发票 dict 跑通流水线
+### 从 API 解析后的发票 dict 跑通流水线（Python）
 
 ```python
 from src.pipeline import CarbonAccountingPipeline
@@ -101,33 +138,46 @@ out = pipeline.process_invoice_from_dict(invoice_data)
 # out["aggregate_kg"]     # 按 Scope 汇总
 ```
 
+### 发票解析与碳核算（Node invoice-parser）
+
+```js
+const { parseInvoice } = require('./invoice-parser/src/parser/index');
+const { matchFactor } = require('./invoice-parser/src/matching/factorMatcher');
+const { calculateBatch } = require('./invoice-parser/src/calculation/batchCalculator');
+
+const invoice = await parseInvoice('./path/to/invoice.pdf');
+const emissionResult = calculateBatch(invoice.items, {
+  sellerAddress: invoice.sellerName,
+  buyerAddress: invoice.buyerName,
+}, invoice.invoiceNumber);
+// emissionResult.totalEmissions, emissionResult.summary.scope1/2/3
+```
+
 ### 碳足迹 Agent 前后端
 
 启动服务后访问 http://localhost:8000：
 
-- **查询**：输入产品名称（如电力、汽油、鸡蛋），返回碳种类、二氧化碳当量及碳成本价格
-- **新增数据**：添加自定义产品碳足迹到 SQLite 数据库，后续查询优先匹配自定义数据
-- **自定义列表**：查看已添加的产品
+- **查询**：输入产品名称（如电力、汽油、鸡蛋），返回碳种类、二氧化碳当量及碳成本价格  
+- **新增数据**：添加自定义产品碳足迹到 SQLite  
+- **自定义列表**：查看已添加的产品  
 
 ```bash
 python run_server.py
 ```
 
-### CPCD NLP 匹配（agent 输入 → 产品类别）
-
-将用户输入文本与 `cpcd_full_*.csv` 中的产品名称进行语义匹配，返回最相似的产品及其碳足迹：
+### CPCD NLP 匹配（Python）
 
 ```python
-from src.cpcd_matcher import CPCDNLPMatcher, CPCDMatch
+from src.cpcd_matcher import CPCDNLPMatcher
 
-matcher = CPCDNLPMatcher()  # 默认加载 cpcd_full_20260213_164705.csv
+matcher = CPCDNLPMatcher()
 for m in matcher.match("电力", top_k=3):
     print(f"{m.similarity:.3f} | {m.product_name} | {m.carbon_footprint}")
 ```
 
 或命令行：`python -m src.cpcd_matcher 电力`
 
-### 碳利润表
+### 碳利润表（Python）
 
 ```python
 st = pipeline.build_statement(
@@ -138,22 +188,17 @@ st = pipeline.build_statement(
 # st.carbon_adjusted_gross, st.net_carbon_pnl 等
 ```
 
-### 映射表与因子
+## 映射表与因子
 
-- **19 位税号 → Scope**：优先从 **SQLite** `data/reference_table.db` 加载（需先执行导入脚本）；若无 DB 则从项目根目录 `reference table.xlsx` 加载；再回退到 `data/scope_mapping_rules.yaml` 与 `data/tax_code_to_scope.csv`。可通过 `AppConfig.scope_mapping.ref_table_path` / `ref_db_path` 指定路径。
-- **将 xlsx 导入数据库（推荐，xlsx 行数较多时）**：
-  ```bash
-  python scripts/import_reference_table_to_db.py
-  # 或指定路径：--xlsx "path/to.xlsx" --db "data/reference_table.db"
-  ```
-  导入后程序自动优先读取 `data/reference_table.db`，不再重复解析大 xlsx。
-- **碳价**：不参与碳市场时使用内部价（如 100–300 元/吨）；履约时可对接上海环境能源交易所每日收盘价（见 `carbon_price_fetcher.py` 占位）。
+- **19 位税号 → Scope**：优先从 **SQLite** `data/reference_table.db` 加载（需先执行 `python scripts/import_reference_table_to_db.py`）；若无 DB 则从 `reference table.xlsx` 或 `data/scope_mapping_rules.yaml`、`data/tax_code_to_scope.csv` 回退。  
+- **排放因子**：Python 使用 `data/emission_factors.csv` 等；invoice-parser 使用项目根目录 `Emission factors.csv`（CPCD）及内置电力/燃料/EEIO 因子，支持区域电网与动态匹配。  
+- **碳价**：内部价或对接上海环境能源交易所（见 `carbon_price_fetcher.py`）。
 
 ## 设计依据
 
-- 排放范围与分类逻辑：GHG Protocol（温室气体核算体系）。  
-- 中国税收分类编码：作为国家标准锚点，优先使用 19 位编码字段。  
-- 双账本与碳利润表结构：与您提供的「成本归集与碳利润表」设计一致。
+- 排放范围与分类：GHG Protocol。  
+- 中国税收分类编码：19 位编码为锚点。  
+- 双账本与碳利润表：与成本归集与碳利润表设计一致。
 
 ## License
 
