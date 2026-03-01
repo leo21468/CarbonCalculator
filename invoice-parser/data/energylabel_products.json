@@ -1,0 +1,21 @@
+[
+  {
+    "productType": "空调",
+    "model": "KFR-35",
+    "annualKWh": 850,
+    "lifetimeYears": 10,
+    "source": "能效标识网备案示例，请替换为从 https://www.energylabel.com.cn/productFiling 查询后整理"
+  },
+  {
+    "productType": "房间空调器",
+    "annualKWh": 800,
+    "lifetimeYears": 10,
+    "source": "典型值"
+  },
+  {
+    "productType": "冰箱",
+    "annualKWh": 300,
+    "lifetimeYears": 12,
+    "source": "典型值"
+  }
+]
