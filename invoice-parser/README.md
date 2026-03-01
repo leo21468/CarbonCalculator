@@ -16,8 +16,8 @@ invoice-parser/
     │   ├── scopeMappingTable.js # 映射表（模拟数据，生产需对接税务总局 API）
     │   ├── classifyByTaxCode.js  # classifyByTaxCode(taxCode, goodsName)
     │   └── testMapping.js       # 映射测试
-    ├── nlp/                     # 货物名称 NLP：关键词 + 模糊匹配 + BERT 混合分类
-    │   ├── index.js             # processGoodsName、classifyWithBERT、classifyHybrid
+    ├── parser/
+    │   ├── index.js            # 统一入口 parseInvoice(filePath, fileType)
     │   ├── keywordExtractor.js  # 行业词典、*xxx* 与规则抽取
     │   ├── fuzzyMatcher.js      # Levenshtein 模糊匹配到标准分类
     │   ├── categoryLabels.js   # 10 类标签（电子产品/办公家具/…/其他）
@@ -32,6 +32,13 @@ invoice-parser/
     │   ├── pdfParser.js        # PDF 解析（文本 + 可选 OCR）
     │   ├── xmlParser.js        # XML 解析
     │   └── jsonParser.js       # JSON 解析
+    ├── factors/                 # 排放因子数据库（基于 Emission factors.csv）
+    │   ├── index.js
+    │   ├── emissionFactors.js  # 因子数据结构、CPCD 碳足迹解析
+    │   ├── factorDatabase.js   # 电力/用水/燃料/EEIO 初始化与 CSV 加载
+    │   ├── factorService.js    # getFactorByCategory、getFactorByName、getEEIOFactor
+    │   ├── factorManager.js    # 单位换算为 kgCO2e、来源追溯
+    │   └── testFactors.js      # 因子查询与格式测试
     └── test/
         ├── testParser.js       # 测试脚本
         └── fixtures/
@@ -71,6 +78,7 @@ npm install
 npm test
 npm run test:mapping   # 税收分类 → Scope 1/2/3 映射测试
 npm run test:nlp       # 货物名称关键词抽取与模糊匹配测试
+npm run test:factors  # 排放因子查询与单位换算测试
 ```
 
 测试覆盖：JSON、XML 解析，以及（若存在）PDF、OFD 文件；并包含文件不存在、不支持类型等错误处理。映射测试覆盖燃料(Scope 1)、电力(Scope 2)、润滑油/服务/商品(Scope 3)及例外规则。
@@ -119,3 +127,10 @@ npm run test:nlp       # 货物名称关键词抽取与模糊匹配测试
     ```
   - **验证模型是否加载成功**：`node src/nlp/verifyBert.js`（需同样设置上述两个环境变量）。
 - 生产环境可替换为云端 LLM API。
+
+## 排放因子数据库
+
+- **数据来源**：基于 **Emission factors.csv**（CPCD，原 cpcd_full_*.csv）及 **data/emission_factors.csv**，并内置电力/用水/燃料/制造业 EEIO 默认因子。
+- **factorService**：`getFactorByCategory(category, region)`、`getFactorByName(name)`、`getEEIOFactor(industry)`。
+- **factorManager**：`toKgCO2e(factor, amount)` 统一换算为 kgCO2e；数据来源标记与追溯。
+- 运行测试：`npm run test:factors`。

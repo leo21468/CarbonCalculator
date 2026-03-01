@@ -7,7 +7,8 @@
     "test": "node src/test/testParser.js",
     "test:mapping": "node src/mapping/testMapping.js",
     "test:nlp": "node src/nlp/testNLP.js",
-    "demo:hybrid": "node src/nlp/demoHybrid.js"
+    "demo:hybrid": "node src/nlp/demoHybrid.js",
+    "test:factors": "node src/factors/testFactors.js"
   },
   "keywords": [
     "invoice",
