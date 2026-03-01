@@ -165,7 +165,9 @@ class PdfInvoiceParser(BaseInvoiceParser):
             raise ImportError("图片型 PDF 需要 PaddleOCR：pip install paddleocr")
 
         if not hasattr(PdfInvoiceParser, '_ocr_instance') or PdfInvoiceParser._ocr_instance is None:
-            PdfInvoiceParser._ocr_instance = PaddleOCR(use_angle_cls=True, lang='ch', show_log=False)
+            import os
+            use_gpu = os.environ.get("PADDLE_USE_GPU", "1").strip() not in ("0", "false", "False", "no")
+            PdfInvoiceParser._ocr_instance = PaddleOCR(use_angle_cls=True, lang='ch', show_log=False, use_gpu=use_gpu)
         ocr = PdfInvoiceParser._ocr_instance
 
         import numpy as np
