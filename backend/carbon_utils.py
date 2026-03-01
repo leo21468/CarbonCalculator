@@ -26,7 +26,7 @@ def parse_carbon_footprint(text: str) -> Tuple[float, str]:
     except ValueError:
         return 0.0, ""
     unit_raw = m.group(2).lower() if m.group(2) else "kg"
-    unit_name = m.group(3).strip() if len(m.groups()) > 3 and m.group(3) else ""
+    unit_name = m.group(3).strip() if len(m.groups()) >= 3 and m.group(3) else ""
     if unit_raw.startswith("t"):
         val *= 1000
     elif unit_raw.startswith("g") and not unit_raw.startswith("kg"):

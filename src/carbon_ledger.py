@@ -5,7 +5,7 @@
 from __future__ import annotations
 from typing import List, Optional
 
-from .config import AppConfig, CarbonPriceConfig
+from .config import CarbonPriceConfig
 from .models import (
     CarbonLedgerEntry,
     CarbonProfitStatement,

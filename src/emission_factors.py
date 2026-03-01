@@ -2,6 +2,7 @@
 排放因子表：19位税号/因子ID → 物理因子或 EEIO 因子。
 """
 from __future__ import annotations
+import csv
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -18,29 +19,25 @@ def load_emission_factors() -> Dict[str, dict]:
     p = _DATA / "emission_factors.csv"
     if not p.exists():
         return result
-    with open(p, encoding="utf-8") as f:
-        lines = f.readlines()
-    if not lines or len(lines) < 2:
+    with open(p, encoding="utf-8", newline="") as f:
+        reader = csv.reader(f)
+        rows = list(reader)
+    if not rows or len(rows) < 2:
         return result
-    headers = [h.strip() for h in lines[0].split(",")]
-    for line in lines[1:]:
-        line = line.strip()
-        if not line:
+    for parts in rows[1:]:
+        if not parts or len(parts) < 4:
             continue
-        parts = [x.strip() for x in line.split(",")]
-        if len(parts) < 4:
-            continue
-        fid = parts[0]
+        fid = parts[0].strip()
         try:
-            kg_co2e = float(parts[3])
+            kg_co2e = float(parts[3].strip())
         except (ValueError, TypeError):
             # Skip invalid rows with non-numeric emission factors
             continue
         result[fid] = {
-            "scope": parts[1],
-            "unit": parts[2],
+            "scope": parts[1].strip(),
+            "unit": parts[2].strip(),
             "kg_co2e_per_unit": kg_co2e,
-            "description": parts[4] if len(parts) > 4 else "",
+            "description": parts[4].strip() if len(parts) > 4 else "",
         }
     return result
 

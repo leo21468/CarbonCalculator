@@ -117,9 +117,10 @@ def list_products() -> List[CustomProduct]:
 def find_by_name(product_name: str) -> Optional[CustomProduct]:
     conn = get_connection()
     try:
+        escaped = product_name.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         r = conn.execute(
-            "SELECT id, product_name, carbon_type, carbon_footprint, co2_per_unit, unit, price_per_ton, remark FROM custom_products WHERE product_name LIKE ? LIMIT 1",
-            (f"%{product_name}%",),
+            "SELECT id, product_name, carbon_type, carbon_footprint, co2_per_unit, unit, price_per_ton, remark FROM custom_products WHERE product_name LIKE ? ESCAPE '\\' LIMIT 1",
+            (f"%{escaped}%",),
         ).fetchone()
         if r is None:
             return None
