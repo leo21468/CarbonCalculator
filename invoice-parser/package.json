@@ -6,7 +6,8 @@
   "scripts": {
     "test": "node src/test/testParser.js",
     "test:mapping": "node src/mapping/testMapping.js",
-    "test:nlp": "node src/nlp/testNLP.js"
+    "test:nlp": "node src/nlp/testNLP.js",
+    "demo:hybrid": "node src/nlp/demoHybrid.js"
   },
   "keywords": [
     "invoice",
@@ -17,6 +18,8 @@
     "parser"
   ],
   "dependencies": {
+    "@huggingface/transformers": "^3.8.1",
+    "@xenova/transformers": "^2.17.2",
     "fast-xml-parser": "^4.3.2",
     "jszip": "^3.10.1",
     "natural": "^6.12.0",
