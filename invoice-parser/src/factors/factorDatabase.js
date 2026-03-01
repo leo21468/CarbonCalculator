@@ -34,6 +34,10 @@ const BUILTIN_FACTORS = [
   { id: 'eeio_default', name: '制造业EEIO默认因子', category: FACTOR_CATEGORY.EEIO, subCategory: '默认', value: 0.00015, unit: 'kgCO2e/CNY', region: '全国', source: 'data/emission_factors.csv(scope3_default)', year: null, factorType: FACTOR_TYPE.EEIO },
   { id: 'material_steel', name: '钢材/钢板物理因子', category: FACTOR_CATEGORY.MATERIAL, subCategory: '钢材', value: 2000, unit: 'kgCO2e/t', region: '全国', source: 'LCA文献/钢铁行业平均', year: null, factorType: FACTOR_TYPE.PHYSICAL },
   { id: 'material_cement', name: '水泥物理因子', category: FACTOR_CATEGORY.MATERIAL, subCategory: '水泥', value: 720, unit: 'kgCO2e/t', region: '全国', source: 'LCA文献', year: null, factorType: FACTOR_TYPE.PHYSICAL },
+  { id: 'material_motor', name: '微型电机/电机物理因子（按台）', category: FACTOR_CATEGORY.MATERIAL, subCategory: '电机', value: 6, unit: 'kgCO2e/个', region: '全国', source: 'LCA文献/电机行业平均（按台估算，见制造业插件注释）', year: null, factorType: FACTOR_TYPE.PHYSICAL },
+  { id: 'material_plastic', name: '塑料物理因子', category: FACTOR_CATEGORY.MATERIAL, subCategory: '塑料', value: 3, unit: 'kgCO2e/kg', region: '全国', source: 'LCA文献/典型值（品种差异大，生产建议用EPD）', year: null, factorType: FACTOR_TYPE.PHYSICAL },
+  { id: 'material_copper', name: '铜/铜材物理因子', category: FACTOR_CATEGORY.MATERIAL, subCategory: '铜', value: 4, unit: 'kgCO2e/kg', region: '全国', source: 'LCA文献/典型值', year: null, factorType: FACTOR_TYPE.PHYSICAL },
+  { id: 'material_aluminum', name: '铝/铝材物理因子', category: FACTOR_CATEGORY.MATERIAL, subCategory: '铝', value: 10, unit: 'kgCO2e/kg', region: '全国', source: 'LCA文献/典型值（电解铝较高）', year: null, factorType: FACTOR_TYPE.PHYSICAL },
 ];
 
 let factorList = [];
