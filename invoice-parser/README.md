@@ -16,11 +16,16 @@ invoice-parser/
     │   ├── scopeMappingTable.js # 映射表（模拟数据，生产需对接税务总局 API）
     │   ├── classifyByTaxCode.js  # classifyByTaxCode(taxCode, goodsName)
     │   └── testMapping.js       # 映射测试
-    ├── nlp/                     # 货物名称 NLP：关键词抽取 + 模糊匹配
-    │   ├── index.js             # processGoodsName(goodsName)
+    ├── nlp/                     # 货物名称 NLP：关键词 + 模糊匹配 + BERT 混合分类
+    │   ├── index.js             # processGoodsName、classifyWithBERT、classifyHybrid
     │   ├── keywordExtractor.js  # 行业词典、*xxx* 与规则抽取
     │   ├── fuzzyMatcher.js      # Levenshtein 模糊匹配到标准分类
-    │   └── testNLP.js           # NLP 测试
+    │   ├── categoryLabels.js   # 10 类标签（电子产品/办公家具/…/其他）
+    │   ├── trainingData.json   # 100+ 条标注样本（供 BERT 质心）
+    │   ├── bertClassifier.js   # BERT 分类（@xenova/transformers，无训练）
+    │   ├── hybridClassifier.js # 混合策略：税号 → BERT → 关键词
+    │   ├── demoHybrid.js       # 混合分类演示
+    │   └── testNLP.js          # NLP 测试
     ├── parser/
     │   ├── index.js            # 统一入口 parseInvoice(filePath, fileType)
     │   ├── ofdParser.js        # OFD 解析
@@ -92,3 +97,25 @@ npm run test:nlp       # 货物名称关键词抽取与模糊匹配测试
 - **keywordExtractor.js**：行业词典（能源/原材料/运输/办公/服务）、星号标注 `*xxx*` 识别、规则抽取；可后续接入 **jieba**（如 nodejieba）或 BERT/LLM。
 - **fuzzyMatcher.js**：基于 **natural** 的 Levenshtein 相似度，阈值默认 0.8，将关键词映射到标准类（如「办公桌」→「办公-家具」）。
 - 运行测试：`npm run test:nlp`。
+
+## BERT 混合分类（模糊发票类目）
+
+- **classifyWithBERT(text)**：使用 **@xenova/transformers** 加载预训练模型（默认 Xenova/paraphrase-multilingual-MiniLM-L12-v2），对发票明细文本做向量化后与训练集类别质心比相似度，返回 `{ category, categoryName, confidence }`。无训练，轻量级。
+- **classifyHybrid(text, taxCode)**：一级优先税收编码映射，二级 BERT，三级当 BERT 置信度低于 0.7 时降级为关键词匹配。
+- **trainingData.json**：100+ 条标注样本（10 类），用于 BERT 各类质心计算。
+- 运行演示（首次会下载模型约 30MB）：`npm run demo:hybrid`。
+- **使用本地已准备的模型**：
+  - 库会在 `TRANSFORMERS_CACHE` 下查找 **Xenova/paraphrase-multilingual-MiniLM-L12-v2/**（即需存在 `tokenizer.json`、`config.json`、`*.onnx` 等）。
+  - **目录结构**：若你的模型在 `<模型根>/paraphrase-multilingual-MiniLM-L12-v2/`，需让库能访问到 `<模型根>/Xenova/paraphrase-multilingual-MiniLM-L12-v2/`。可二选一：
+    1. 将模型放到 `<模型根>/Xenova/paraphrase-multilingual-MiniLM-L12-v2/`；或  
+    2. 保留 `<模型根>/paraphrase-multilingual-MiniLM-L12-v2/`，在 `<模型根>` 下新建 `Xenova` 目录，并建立目录联接（Windows）：  
+       `mklink /J "<模型根>\Xenova\paraphrase-multilingual-MiniLM-L12-v2" "<模型根>\paraphrase-multilingual-MiniLM-L12-v2"`
+  - **运行前设置环境变量**（PowerShell）：
+    ```powershell
+    $env:TRANSFORMERS_CACHE = "D:\my_models"   # 改为你的模型根目录
+    $env:TRANSFORMERS_LOCAL_ONLY = "1"
+    cd invoice-parser
+    npm run demo:hybrid
+    ```
+  - **验证模型是否加载成功**：`node src/nlp/verifyBert.js`（需同样设置上述两个环境变量）。
+- 生产环境可替换为云端 LLM API。

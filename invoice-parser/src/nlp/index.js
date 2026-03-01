@@ -48,4 +48,7 @@ module.exports = {
   fuzzyMatchAll: require('./fuzzyMatcher').fuzzyMatchAll,
   INDUSTRY_DICT: require('./keywordExtractor').INDUSTRY_DICT,
   STANDARD_CATEGORIES: require('./fuzzyMatcher').STANDARD_CATEGORIES,
+  classifyWithBERT: require('./bertClassifier').classifyWithBERT,
+  classifyHybrid: require('./hybridClassifier').classifyHybrid,
+  CATEGORY_LABELS: require('./categoryLabels').CATEGORY_LABELS,
 };
