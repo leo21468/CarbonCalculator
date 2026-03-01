@@ -13,7 +13,9 @@
     "demo:matching": "node src/matching/demoMatching.js",
     "test:calculation": "node src/calculation/testCalculator.js",
     "test:manufacturing": "node src/industry/testManufacturing.js",
-    "test:office-energy": "node src/scenarios/testOfficeEnergy.js"
+    "test:office-energy": "node src/scenarios/testOfficeEnergy.js",
+    "test:hotel": "node src/scenarios/testHotel.js",
+    "test:others": "node src/scenarios/testOthers.js"
   },
   "keywords": [
     "invoice",
