@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import List, Optional
 
 _ROOT = Path(__file__).resolve().parents[1]
-_DEFAULT_CPCD_PATH = _ROOT / "cpcd_full_20260213_164705.csv"
+_DEFAULT_CPCD_PATH = _ROOT / "Emission factors.csv"
 
 
 @dataclass

@@ -1,0 +1,25 @@
+{
+  "name": "carboncalculator",
+  "version": "1.0.0",
+  "description": "基于电子发票与 GHG Protocol 的企业碳排放核算与碳利润表演示系统，用于将环境数据资产化：从「核算排放多少吨」到「这些排放让企业少赚了多少钱」。",
+  "main": "index.js",
+  "directories": {
+    "example": "examples",
+    "test": "tests"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/leo21468/CarbonCalculator.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/leo21468/CarbonCalculator/issues"
+  },
+  "homepage": "https://github.com/leo21468/CarbonCalculator#readme"
+}
