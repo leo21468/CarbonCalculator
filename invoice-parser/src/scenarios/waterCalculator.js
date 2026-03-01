@@ -30,13 +30,13 @@ function extractWaterData(invoice) {
   const items = Array.isArray(invoice?.items) ? invoice.items : [];
   const invRemark = invoice?.remark != null ? String(invoice.remark) : (invoice?.remarks != null ? String(invoice.remarks) : '');
 
-  // 1) 数量栏
+  // 1) 数量栏（仅当名称或备注暗示用水时，才将数量+单位吨/m³ 视为用水量，避免误判钢材等）
   for (let i = 0; i < items.length; i++) {
     const it = items[i];
     const q = it.quantity != null ? Number(it.quantity) : NaN;
     const unit = (it.unit || it.unitOfMeasure || '').toString().trim();
     const name = (it.name || it.goodsName || '').toString();
-    if (!Number.isNaN(q) && q > 0 && /吨|m3|立方米|方/i.test(unit)) {
+    if (!Number.isNaN(q) && q > 0 && /吨|m3|立方米|方/i.test(unit) && /水|用水|水费|自来水/i.test(name)) {
       const tons = normalizeToTons(q, unit);
       if (!Number.isNaN(tons)) {
         return { usageTons: tons, source: 'quantity', matchedFrom: `items[${i}].quantity+unit (${q} ${unit})` };
