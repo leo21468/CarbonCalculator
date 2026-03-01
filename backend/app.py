@@ -23,29 +23,35 @@ from backend.database import (
 )
 
 # 延迟导入 CPCD matcher（避免启动时加载大 CSV）
+import threading
 _cpcd_matcher = None
 _pipeline = None
+_singleton_lock = threading.Lock()
 _CARBON_PRICE = 100.0  # 元/吨
 
 
 def _get_matcher():
     global _cpcd_matcher
     if _cpcd_matcher is None:
-        from src.cpcd_matcher import CPCDNLPMatcher
-        _cpcd_matcher = CPCDNLPMatcher()
-        _cpcd_matcher.load()
+        with _singleton_lock:
+            if _cpcd_matcher is None:
+                from src.cpcd_matcher import CPCDNLPMatcher
+                _cpcd_matcher = CPCDNLPMatcher()
+                _cpcd_matcher.load()
     return _cpcd_matcher
 
 
 def _get_pipeline():
     global _pipeline
     if _pipeline is None:
-        from src.pipeline import CarbonAccountingPipeline
-        from src.config import AppConfig, CarbonPriceConfig
-        config = AppConfig(
-            carbon_price=CarbonPriceConfig(source="internal", price_per_ton=_CARBON_PRICE),
-        )
-        _pipeline = CarbonAccountingPipeline(config=config)
+        with _singleton_lock:
+            if _pipeline is None:
+                from src.pipeline import CarbonAccountingPipeline
+                from src.config import AppConfig, CarbonPriceConfig
+                config = AppConfig(
+                    carbon_price=CarbonPriceConfig(source="internal", price_per_ton=_CARBON_PRICE),
+                )
+                _pipeline = CarbonAccountingPipeline(config=config)
     return _pipeline
 
 
@@ -209,16 +215,16 @@ async def upload_invoice(file: UploadFile = File(...)):
     result = pipeline.process_invoice(invoice, ref_invoice_id=invoice.invoice_number)
 
     classified = result.get("classified", [])
-    emission_results = result.get("emission_results", [])
 
-    # 构建 emission_kg 映射（按行索引）
-    emission_map = {}
-    for i, er in enumerate(emission_results):
-        emission_map[i] = er.emission_kg
+    # 构建每条明细的排放量（逐项计算，避免过滤后的批量结果索引错位）
+    per_item_emissions = []
+    for cl in classified:
+        er = pipeline.calculator.calculate_line(cl)
+        per_item_emissions.append(er.emission_kg if er is not None else 0.0)
 
     # 将分类结果存入数据库
     records = []
-    for i, cl in enumerate(classified):
+    for cl, emission_kg in zip(classified, per_item_emissions):
         records.append(InvoiceCategoryRecord(
             id=None,
             invoice_number=invoice.invoice_number,
@@ -226,7 +232,7 @@ async def upload_invoice(file: UploadFile = File(...)):
             scope=cl.scope.value,
             match_type=cl.match_type,
             amount=cl.line.amount,
-            emission_kg=emission_map.get(i, 0.0),
+            emission_kg=emission_kg,
             tax_code=cl.matched_tax_code,
         ))
     if records:
@@ -236,13 +242,13 @@ async def upload_invoice(file: UploadFile = File(...)):
     aggregate = result.get("aggregate_kg", {})
     total_emissions_kg = sum(aggregate.values()) if aggregate else 0.0
     lines_result = []
-    for i, cl in enumerate(classified):
+    for cl, emission_kg in zip(classified, per_item_emissions):
         lines_result.append({
             "name": cl.line.name,
             "scope": cl.scope.value,
             "match_type": cl.match_type,
             "amount": cl.line.amount,
-            "emission_kg": round(emission_map.get(i, 0.0), 4),
+            "emission_kg": round(emission_kg, 4),
             "tax_code": cl.matched_tax_code,
         })
 
@@ -300,12 +306,13 @@ def process_invoice_json(body: dict = Body(...)):
         raise HTTPException(status_code=400, detail=f"发票数据解析失败：{e}")
 
     classified = result.get("classified", [])
-    emission_results = result.get("emission_results", [])
     aggregate = result.get("aggregate_kg", {})
 
-    emission_map = {}
-    for i, er in enumerate(emission_results):
-        emission_map[i] = er.emission_kg
+    # 构建每条明细的排放量（逐项计算，避免过滤后的批量结果索引错位）
+    per_item_emissions = []
+    for cl in classified:
+        er = pipeline.calculator.calculate_line(cl)
+        per_item_emissions.append(er.emission_kg if er is not None else 0.0)
 
     invoice_number = (body.get("invoice_number") or "").strip() or None
     seller_name = None
@@ -317,7 +324,7 @@ def process_invoice_json(body: dict = Body(...)):
     # 写入类别统计（若有发票号）
     if invoice_number and classified:
         records = []
-        for i, cl in enumerate(classified):
+        for cl, emission_kg in zip(classified, per_item_emissions):
             records.append(InvoiceCategoryRecord(
                 id=None,
                 invoice_number=invoice_number,
@@ -325,7 +332,7 @@ def process_invoice_json(body: dict = Body(...)):
                 scope=cl.scope.value,
                 match_type=cl.match_type,
                 amount=cl.line.amount,
-                emission_kg=emission_map.get(i, 0.0),
+                emission_kg=emission_kg,
                 tax_code=cl.matched_tax_code,
             ))
         add_invoice_categories_batch(records)
@@ -337,10 +344,10 @@ def process_invoice_json(body: dict = Body(...)):
             "scope": cl.scope.value,
             "match_type": cl.match_type,
             "amount": cl.line.amount,
-            "emission_kg": round(emission_map.get(i, 0.0), 4),
+            "emission_kg": round(emission_kg, 4),
             "tax_code": cl.matched_tax_code,
         }
-        for i, cl in enumerate(classified)
+        for cl, emission_kg in zip(classified, per_item_emissions)
     ]
 
     return {

@@ -27,8 +27,14 @@ _NAME_COL_NAMES = ("名称", "描述", "name", "货物或应税劳务名称")
 def _normalize_scope(val) -> Optional[Scope]:
     """将单元格值转为 Scope 枚举"""
     # Use proper NaN checking
-    if val is None or pd.isna(val):
+    if val is None:
         return None
+    try:
+        if pd.isna(val):
+            return None
+    except (TypeError, ValueError):
+        # pd.isna raises for container types; treat non-scalar values as not NaN
+        pass
     s = str(val).strip()
     for scope in Scope:
         if scope.value in s or s in scope.value or s == str(scope.value):
@@ -151,25 +157,23 @@ def _load_excel_mapping(path: Optional[Path] = None) -> List[Tuple[str, Scope, L
 
 def _load_csv_mapping() -> List[Tuple[str, Scope, str, List[str], str]]:
     """加载 data/tax_code_to_scope.csv：前缀, scope, 描述, 排除关键词, 因子ID"""
+    import csv
     rows = []
     p = _DATA / "tax_code_to_scope.csv"
     if not p.exists():
         return rows
-    with open(p, encoding="utf-8") as f:
-        lines = f.readlines()
+    with open(p, encoding="utf-8", newline="") as f:
+        reader = csv.reader(f)
+        lines = list(reader)
     # Check if file has enough lines (header + at least one data row)
     if not lines or len(lines) < 2:
         return rows
-    for line in lines[1:]:
-        line = line.strip()
-        if not line:
+    for parts in lines[1:]:
+        if not parts or len(parts) < 3:
             continue
-        parts = [x.strip() for x in line.split(",")]
-        if len(parts) < 3:
-            continue
-        prefix, scope_str, desc = parts[0], parts[1], parts[2]
-        exclude = (parts[3].split(";") if len(parts) > 3 and parts[3] else [])
-        factor_id = parts[4] if len(parts) > 4 else "default"
+        prefix, scope_str, desc = parts[0].strip(), parts[1].strip(), parts[2].strip()
+        exclude = (parts[3].split(";") if len(parts) > 3 and parts[3].strip() else [])
+        factor_id = parts[4].strip() if len(parts) > 4 else "default"
         try:
             scope = Scope(scope_str)
         except ValueError:
