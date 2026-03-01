@@ -5,15 +5,25 @@
   "main": "src/parser/index.js",
   "scripts": {
     "test": "node src/test/testParser.js",
-    "test:mapping": "node src/mapping/testMapping.js"
+    "test:mapping": "node src/mapping/testMapping.js",
+    "test:nlp": "node src/nlp/testNLP.js"
   },
-  "keywords": ["invoice", "ofd", "pdf", "xml", "json", "parser"],
+  "keywords": [
+    "invoice",
+    "ofd",
+    "pdf",
+    "xml",
+    "json",
+    "parser"
+  ],
   "dependencies": {
     "fast-xml-parser": "^4.3.2",
     "jszip": "^3.10.1",
+    "natural": "^6.12.0",
     "pdf-parse": "^1.1.1",
     "tesseract.js": "^5.0.4"
   },
-  "devDependencies": {},
-  "engines": { "node": ">=16.0.0" }
+  "engines": {
+    "node": ">=16.0.0"
+  }
 }

@@ -16,6 +16,11 @@ invoice-parser/
     │   ├── scopeMappingTable.js # 映射表（模拟数据，生产需对接税务总局 API）
     │   ├── classifyByTaxCode.js  # classifyByTaxCode(taxCode, goodsName)
     │   └── testMapping.js       # 映射测试
+    ├── nlp/                     # 货物名称 NLP：关键词抽取 + 模糊匹配
+    │   ├── index.js             # processGoodsName(goodsName)
+    │   ├── keywordExtractor.js  # 行业词典、*xxx* 与规则抽取
+    │   ├── fuzzyMatcher.js      # Levenshtein 模糊匹配到标准分类
+    │   └── testNLP.js           # NLP 测试
     ├── parser/
     │   ├── index.js            # 统一入口 parseInvoice(filePath, fileType)
     │   ├── ofdParser.js        # OFD 解析
@@ -60,6 +65,7 @@ cd invoice-parser
 npm install
 npm test
 npm run test:mapping   # 税收分类 → Scope 1/2/3 映射测试
+npm run test:nlp       # 货物名称关键词抽取与模糊匹配测试
 ```
 
 测试覆盖：JSON、XML 解析，以及（若存在）PDF、OFD 文件；并包含文件不存在、不支持类型等错误处理。映射测试覆盖燃料(Scope 1)、电力(Scope 2)、润滑油/服务/商品(Scope 3)及例外规则。
@@ -79,3 +85,10 @@ npm run test:mapping   # 税收分类 → Scope 1/2/3 映射测试
 - `classifyByTaxCode(taxCode, goodsName)`：根据 19 位税号与货物名称返回 `{ scope: 1|2|3, confidence: '高'|'中'|'低', reason }`。
 - 映射逻辑与例外规则（如润滑油归 Scope 3）见 `src/mapping/`，依据 GHG Protocol。
 - **数据来源**：当前为模拟数据；生产环境需对接国家税务总局 API 或官方《商品和服务税收分类编码表》。
+
+## 货物名称 NLP（关键词抽取与模糊匹配）
+
+- `processGoodsName(goodsName)`：对发票货物名称做关键词抽取并模糊匹配到标准分类，返回 `{ keywords, confidence, matches, summary }`。
+- **keywordExtractor.js**：行业词典（能源/原材料/运输/办公/服务）、星号标注 `*xxx*` 识别、规则抽取；可后续接入 **jieba**（如 nodejieba）或 BERT/LLM。
+- **fuzzyMatcher.js**：基于 **natural** 的 Levenshtein 相似度，阈值默认 0.8，将关键词映射到标准类（如「办公桌」→「办公-家具」）。
+- 运行测试：`npm run test:nlp`。
