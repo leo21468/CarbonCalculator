@@ -87,15 +87,31 @@ function extractItemsFromText(text) {
   let headerLineIdx = -1;
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    if (nameKeywords.some((k) => line.includes(k)) && (taxCodeKeywords.some((k) => line.includes(k)) || amountKeywords.some((k) => line.includes(k)))) {
+    if (nameKeywords.some((k) => line.includes(k))) {
       headerLineIdx = i;
       break;
     }
   }
 
   if (headerLineIdx >= 0) {
-    for (let i = headerLineIdx + 1; i < lines.length; i++) {
+    // Merge cross-line item names: a line starting with '*' but not ending with a digit may be
+    // continued on the next line (e.g. "*研发和技术服务*技术服" + "务费 1 157.43")
+    const mergedLines = [];
+    let i = headerLineIdx + 1;
+    while (i < lines.length) {
       const line = lines[i];
+      if (line.startsWith('*') && !/\d/.test(line)) {
+        // Looks like an incomplete item name line — merge with next
+        const next = lines[i + 1] || '';
+        mergedLines.push(line + next);
+        i += 2;
+      } else {
+        mergedLines.push(line);
+        i++;
+      }
+    }
+
+    for (const line of mergedLines) {
       if (/合计|价税合计|小计/.test(line)) break;
       const numParts = line.match(/[\d.]+/g) || [];
       const codeMatch = line.match(/\d{19}/);
