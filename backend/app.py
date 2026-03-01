@@ -101,50 +101,55 @@ def match_product(req: MatchRequest):
     if not name:
         raise HTTPException(status_code=400, detail="产品名称不能为空")
 
-    # 1) 先查自定义数据库
-    custom = find_by_name(name)
-    if custom:
-        cost = carbon_cost_cny(custom.co2_per_unit, custom.price_per_ton)
-        return {
-            "source": "custom",
-            "product_name": custom.product_name,
-            "carbon_type": custom.carbon_type,
-            "carbon_footprint": custom.carbon_footprint,
-            "co2_per_unit_kg": custom.co2_per_unit,
-            "unit": custom.unit,
-            "carbon_cost_cny": round(cost, 2),
-            "price_per_ton": custom.price_per_ton,
-        }
+    try:
+        # 1) 先查自定义数据库
+        custom = find_by_name(name)
+        if custom:
+            cost = carbon_cost_cny(custom.co2_per_unit, custom.price_per_ton)
+            return {
+                "source": "custom",
+                "product_name": custom.product_name,
+                "carbon_type": custom.carbon_type,
+                "carbon_footprint": custom.carbon_footprint,
+                "co2_per_unit_kg": custom.co2_per_unit,
+                "unit": custom.unit,
+                "carbon_cost_cny": round(cost, 2),
+                "price_per_ton": custom.price_per_ton,
+            }
 
-    # 2) CPCD NLP 匹配
-    matcher = _get_matcher()
-    matches = matcher.match(name, top_k=1, min_similarity=0.01)
-    if not matches:
+        # 2) CPCD NLP 匹配
+        matcher = _get_matcher()
+        matches = matcher.match(name, top_k=1, min_similarity=0.01)
+        if not matches:
+            return {
+                "source": "none",
+                "product_name": name,
+                "carbon_type": "-",
+                "carbon_footprint": "-",
+                "co2_per_unit_kg": None,
+                "unit": "-",
+                "carbon_cost_cny": None,
+                "price_per_ton": _CARBON_PRICE,
+                "message": "未找到匹配产品，可添加自定义数据",
+            }
+        m = matches[0]
+        co2_kg, unit = parse_carbon_footprint(m.carbon_footprint)
+        cost = carbon_cost_cny(co2_kg, _CARBON_PRICE) if co2_kg > 0 else None
         return {
-            "source": "none",
-            "product_name": name,
-            "carbon_type": "-",
-            "carbon_footprint": "-",
-            "co2_per_unit_kg": None,
-            "unit": "-",
-            "carbon_cost_cny": None,
+            "source": "cpcd",
+            "product_name": m.product_name,
+            "carbon_type": m.accounting_boundary or m.data_type or "-",
+            "carbon_footprint": m.carbon_footprint,
+            "co2_per_unit_kg": round(co2_kg, 4) if co2_kg > 0 else None,
+            "unit": unit or "-",
+            "carbon_cost_cny": round(cost, 2) if cost is not None else None,
             "price_per_ton": _CARBON_PRICE,
-            "message": "未找到匹配产品，可添加自定义数据",
+            "similarity": round(m.similarity, 3),
         }
-    m = matches[0]
-    co2_kg, unit = parse_carbon_footprint(m.carbon_footprint)
-    cost = carbon_cost_cny(co2_kg, _CARBON_PRICE) if co2_kg > 0 else None
-    return {
-        "source": "cpcd",
-        "product_name": m.product_name,
-        "carbon_type": m.accounting_boundary or m.data_type or "-",
-        "carbon_footprint": m.carbon_footprint,
-        "co2_per_unit_kg": round(co2_kg, 4) if co2_kg > 0 else None,
-        "unit": unit or "-",
-        "carbon_cost_cny": round(cost, 2) if cost is not None else None,
-        "price_per_ton": _CARBON_PRICE,
-        "similarity": round(m.similarity, 3),
-    }
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=503, detail=f"CPCD 数据文件未就绪：{e!s}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"查询失败：{e!s}")
 
 
 @app.get("/api/products")

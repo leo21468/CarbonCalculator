@@ -340,8 +340,14 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ product_name: name }),
         });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.detail || '请求失败');
+        let data;
+        const text = await res.text();
+        try {
+          data = text ? JSON.parse(text) : {};
+        } catch (_) {
+          throw new Error('服务器返回了非 JSON 响应，请稍后重试。' + (res.status === 500 ? ' 若为首次查询，可能是 CPCD 数据文件未就绪。' : ''));
+        }
+        if (!res.ok) throw new Error(data.detail || data.message || '请求失败');
         showResult(data);
       } catch (e) {
         resultEl.innerHTML = `<p class="error">${e.message}</p>`;
