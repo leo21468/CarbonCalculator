@@ -1,6 +1,6 @@
-# 发票解析引擎
+# 发票解析与碳核算引擎
 
-支持 **OFD / PDF / XML / JSON** 四种格式的发票结构化数据提取，重点提取 19 位税收分类编码及票面关键字段。
+支持 **OFD / PDF / XML / JSON** 四种格式的发票结构化数据提取，并基于税收编码、货物名称与排放因子完成 **动态因子匹配** 与 **双模式核算**（活动数据法 + EEIO 支出法）。
 
 ## 目录结构
 
@@ -10,64 +10,101 @@ invoice-parser/
 ├── README.md
 └── src/
     ├── models/
-    │   └── Invoice.js          # 发票数据模型
+    │   ├── Invoice.js           # 发票数据模型
+    │   └── EmissionResult.js    # 排放核算结果模型（总排放、scope1/2/3 汇总）
+    ├── parser/                  # 发票解析
+    │   ├── index.js             # 统一入口 parseInvoice(filePath, fileType)
+    │   ├── ofdParser.js
+    │   ├── pdfParser.js
+    │   ├── xmlParser.js
+    │   └── jsonParser.js
     ├── mapping/                 # 税收分类编码 → 碳排放范围
     │   ├── index.js
-    │   ├── scopeMappingTable.js # 映射表（模拟数据，生产需对接税务总局 API）
-    │   ├── classifyByTaxCode.js  # classifyByTaxCode(taxCode, goodsName)
-    │   └── testMapping.js       # 映射测试
-    ├── parser/
-    │   ├── index.js            # 统一入口 parseInvoice(filePath, fileType)
-    │   ├── keywordExtractor.js  # 行业词典、*xxx* 与规则抽取
-    │   ├── fuzzyMatcher.js      # Levenshtein 模糊匹配到标准分类
-    │   ├── categoryLabels.js   # 10 类标签（电子产品/办公家具/…/其他）
-    │   ├── trainingData.json   # 100+ 条标注样本（供 BERT 质心）
-    │   ├── bertClassifier.js   # BERT 分类（@xenova/transformers，无训练）
-    │   ├── hybridClassifier.js # 混合策略：税号 → BERT → 关键词
-    │   ├── demoHybrid.js       # 混合分类演示
-    │   └── testNLP.js          # NLP 测试
-    ├── parser/
-    │   ├── index.js            # 统一入口 parseInvoice(filePath, fileType)
-    │   ├── ofdParser.js        # OFD 解析
-    │   ├── pdfParser.js        # PDF 解析（文本 + 可选 OCR）
-    │   ├── xmlParser.js        # XML 解析
-    │   └── jsonParser.js       # JSON 解析
-    ├── factors/                 # 排放因子数据库（基于 Emission factors.csv）
+    │   ├── scopeMappingTable.js
+    │   ├── classifyByTaxCode.js
+    │   └── testMapping.js
+    ├── nlp/                     # 货物名称 NLP 与分类
+    │   ├── keywordExtractor.js
+    │   ├── fuzzyMatcher.js
+    │   ├── categoryLabels.js
+    │   ├── trainingData.json
+    │   ├── bertClassifier.js
+    │   ├── hybridClassifier.js
+    │   ├── demoHybrid.js
+    │   ├── testNLP.js
+    │   └── verifyBert.js
+    ├── factors/                 # 排放因子库（电力/燃料/材料/EEIO）
     │   ├── index.js
-    │   ├── emissionFactors.js  # 因子数据结构、CPCD 碳足迹解析
-    │   ├── factorDatabase.js   # 电力/用水/燃料/EEIO 初始化与 CSV 加载
-    │   ├── factorService.js    # getFactorByCategory、getFactorByName、getEEIOFactor
-    │   ├── factorManager.js    # 单位换算为 kgCO2e、来源追溯
-    │   └── testFactors.js      # 因子查询与格式测试
+    │   ├── emissionFactors.js
+    │   ├── factorDatabase.js
+    │   ├── factorService.js
+    │   ├── factorManager.js
+    │   └── testFactors.js
+    ├── matching/                # 动态因子匹配引擎
+    │   ├── index.js
+    │   ├── factorMatcher.js     # matchFactor(invoiceItem, context)
+    │   ├── confidenceScorer.js  # 置信度（高/中/低）
+    │   ├── regionMapper.js      # 地址 → 区域电网
+    │   ├── demoMatching.js
+    │   └── testMatching.js
+    ├── calculation/             # 双模式核算引擎
+    │   ├── index.js
+    │   ├── calculator.js        # 活动数据法 / 支出法
+    │   ├── calculationService.js
+    │   ├── batchCalculator.js   # 批量计算 → EmissionResult
+    │   ├── unitUtils.js         # 单位换算（度→kWh、吨→t）
+    │   └── testCalculator.js
     └── test/
-        ├── testParser.js       # 测试脚本
+        ├── testParser.js
         └── fixtures/
-            ├── sample.json
-            └── sample.xml
 ```
 
-## 数据模型 (Invoice)
+## 数据模型
 
-- `invoiceNumber` - 发票号码  
-- `invoiceDate` - 开票日期  
-- `sellerName` / `sellerTaxId` - 销方名称、税号  
-- `buyerName` / `buyerTaxId` - 购方名称、税号  
-- `items` - 明细行：`name`, `taxCode`(19 位), `amount`, `quantity`, `unit`, `price`  
-- `totalAmount` - 总金额  
-- `fileType` - 原始文件类型 (OFD|PDF|XML|JSON)
+### Invoice
+
+- `invoiceNumber`, `invoiceDate` — 发票号码、开票日期  
+- `sellerName` / `sellerTaxId`, `buyerName` / `buyerTaxId` — 销方/购方  
+- `items` — 明细：`name`, `taxCode`(19 位), `amount`, `quantity`, `unit`, `price`  
+- `totalAmount`, `fileType`
+
+### EmissionResult（核算结果）
+
+- `totalEmissions` — 总排放 (kgCO2e)  
+- `items` — 每条：`invoiceId`, `scope`, `emissions`, `method`, `confidence`, `factorUsed`, `reason`, `itemName`  
+- `summary` — `{ scope1, scope2, scope3 }` 分范围合计  
 
 ## 使用
+
+### 解析发票
 
 ```js
 const { parseInvoice } = require('./src/parser/index');
 
-// 按扩展名自动识别类型
 const invoice = await parseInvoice('./path/to/invoice.pdf');
-
-// 或显式指定类型
-const invoice = await parseInvoice('./path/to/file', 'XML');
+// 或 parseInvoice('./path/to/file', 'XML');
 
 console.log(invoice.invoiceNumber, invoice.items[0].taxCode);
+```
+
+### 因子匹配 + 核算
+
+```js
+const { matchFactor } = require('./src/matching/factorMatcher');
+const { calculate } = require('./src/calculation/calculationService');
+const { calculateBatch } = require('./src/calculation/batchCalculator');
+
+// 单条：匹配因子后计算
+const matched = matchFactor(invoice.items[0], { sellerAddress: '北京市' });
+const result = calculate(invoice.items[0], matched);
+// result: { value, unit, method, scope, confidence, factorUsed, reason }
+
+// 批量：直接得到 EmissionResult
+const emissionResult = calculateBatch(invoice.items, {
+  sellerAddress: invoice.sellerName,
+  buyerAddress: invoice.buyerName,
+}, invoice.invoiceNumber);
+console.log(emissionResult.totalEmissions, emissionResult.summary);
 ```
 
 ## 安装与测试
@@ -76,61 +113,67 @@ console.log(invoice.invoiceNumber, invoice.items[0].taxCode);
 cd invoice-parser
 npm install
 npm test
-npm run test:mapping   # 税收分类 → Scope 1/2/3 映射测试
-npm run test:nlp       # 货物名称关键词抽取与模糊匹配测试
-npm run test:factors  # 排放因子查询与单位换算测试
+npm run test:mapping    # 税收分类 → Scope 1/2/3
+npm run test:nlp        # 关键词抽取与模糊匹配
+npm run test:factors    # 排放因子查询
+npm run test:matching   # 动态因子匹配（冷轧钢板/办公用品/杂项费用等）
+npm run demo:matching   # 匹配演示
+npm run test:calculation # 双模式核算（活动法/支出法、批量、单位换算）
 ```
 
-测试覆盖：JSON、XML 解析，以及（若存在）PDF、OFD 文件；并包含文件不存在、不支持类型等错误处理。映射测试覆盖燃料(Scope 1)、电力(Scope 2)、润滑油/服务/商品(Scope 3)及例外规则。
+## 税收分类 → 排放范围
 
-## 依赖说明
+- `classifyByTaxCode(taxCode, goodsName)` 返回 `{ scope: 1|2|3, confidence, reason }`。  
+- 映射与例外规则（如润滑油 Scope 3）见 `src/mapping/`，依据 GHG Protocol。  
+- 生产环境需对接税务总局 API 或官方税收分类编码表。
 
-- **PDF**：`pdf-parse` 提取文本；扫描件可后续接入 `tesseract.js` 或 `paddle-ocr-node` 做 OCR。  
-- **OFD**：`jszip` + `fast-xml-parser` 解包并解析内嵌 XML。  
-- **XML/JSON**：`fast-xml-parser` / 原生 `JSON.parse`，并从内容中提取 19 位税收分类编码。
+## 货物名称 NLP
+
+- **keywordExtractor**：行业词典、`*xxx*` 识别、规则抽取。  
+- **fuzzyMatcher**：natural 的 Levenshtein 相似度，映射到标准类。  
+- **processGoodsName(goodsName)**：返回 `{ keywords, confidence, matches }`。  
+- `npm run test:nlp`
+
+## BERT 混合分类
+
+- **classifyHybrid(text, taxCode)**：税号 → BERT → 关键词降级。  
+- 模型：Xenova/paraphrase-multilingual-MiniLM-L12-v2；可本地缓存，设置 `TRANSFORMERS_CACHE`、`TRANSFORMERS_LOCAL_ONLY=1`。  
+- 本地目录需能通过 `Xenova/paraphrase-multilingual-MiniLM-L12-v2/` 访问（可用 junction 或拷贝）。  
+- `npm run demo:hybrid`，验证：`node src/nlp/verifyBert.js`。
+
+## 排放因子库
+
+- 数据：**Emission factors.csv**（CPCD）、**data/emission_factors.csv** 及内置电力/燃料/材料/EEIO。  
+- **factorService**：`getFactorByCategory(category, region)`、`getFactorByName(name)`、`getEEIOFactor(industry)`。  
+- **factorManager**：`toKgCO2e(factor, amount)` 统一为 kgCO2e。  
+- `npm run test:factors`
+
+## 动态因子匹配
+
+- **matchFactor(invoiceItem, context)**：按优先级匹配物理因子 / EEIO / 默认因子，返回 `{ factor, matchType, confidence, reason }`。  
+  - 优先 1：有物理量 + 明确物料 → LCA 物理因子（如钢材、电力）  
+  - 优先 2：有税收编码 → 行业/区域因子  
+  - 优先 3：仅金额 + 关键词 → 行业 EEIO  
+  - 降级：默认因子，低置信度  
+- **regionMapper**：销方/购方地址 → 区域电网（华北/华东等）。  
+- **confidenceScorer**：高（物理量+物料+物理因子）/ 中（金额+行业+EEIO）/ 低（模糊或默认）。  
+- `npm run test:matching`、`npm run demo:matching`
+
+## 双模式核算
+
+- **活动数据法**：`calculateByActivity(quantity, factor, unit)` — 排放 = 数量 × 物理因子。  
+- **支出法**：`calculateByExpenditure(amount, factor)` — 排放 = 金额 × EEIO 因子。  
+- **calculationService.calculate(item, matchedFactor)**：根据匹配类型自动选活动法或支出法，并推断 scope（电力→2，燃料→1，其余→3）。  
+- **calculateBatch(invoiceItems, context?, invoiceId?)**：批量匹配+计算，返回 **EmissionResult**（含 totalEmissions、items、summary.scope1/2/3）。  
+- **unitUtils**：度→kWh、吨→t、升→L 等，与因子单位对齐。  
+- `npm run test:calculation`
+
+## 依赖
+
+- **PDF**：pdf-parse；扫描件可接 tesseract.js 等 OCR。  
+- **OFD**：jszip + fast-xml-parser。  
+- **NLP**：natural；BERT 为 @xenova/transformers。
 
 ## 错误与日志
 
-解析过程中的错误会抛出 `Error`，并通过 `[InvoiceParser]` 前缀输出到控制台（info/warn/error）。调用方可通过 `try/catch` 统一处理。
-
-## 税收分类 → 排放范围映射
-
-- `classifyByTaxCode(taxCode, goodsName)`：根据 19 位税号与货物名称返回 `{ scope: 1|2|3, confidence: '高'|'中'|'低', reason }`。
-- 映射逻辑与例外规则（如润滑油归 Scope 3）见 `src/mapping/`，依据 GHG Protocol。
-- **数据来源**：当前为模拟数据；生产环境需对接国家税务总局 API 或官方《商品和服务税收分类编码表》。
-
-## 货物名称 NLP（关键词抽取与模糊匹配）
-
-- `processGoodsName(goodsName)`：对发票货物名称做关键词抽取并模糊匹配到标准分类，返回 `{ keywords, confidence, matches, summary }`。
-- **keywordExtractor.js**：行业词典（能源/原材料/运输/办公/服务）、星号标注 `*xxx*` 识别、规则抽取；可后续接入 **jieba**（如 nodejieba）或 BERT/LLM。
-- **fuzzyMatcher.js**：基于 **natural** 的 Levenshtein 相似度，阈值默认 0.8，将关键词映射到标准类（如「办公桌」→「办公-家具」）。
-- 运行测试：`npm run test:nlp`。
-
-## BERT 混合分类（模糊发票类目）
-
-- **classifyWithBERT(text)**：使用 **@xenova/transformers** 加载预训练模型（默认 Xenova/paraphrase-multilingual-MiniLM-L12-v2），对发票明细文本做向量化后与训练集类别质心比相似度，返回 `{ category, categoryName, confidence }`。无训练，轻量级。
-- **classifyHybrid(text, taxCode)**：一级优先税收编码映射，二级 BERT，三级当 BERT 置信度低于 0.7 时降级为关键词匹配。
-- **trainingData.json**：100+ 条标注样本（10 类），用于 BERT 各类质心计算。
-- 运行演示（首次会下载模型约 30MB）：`npm run demo:hybrid`。
-- **使用本地已准备的模型**：
-  - 库会在 `TRANSFORMERS_CACHE` 下查找 **Xenova/paraphrase-multilingual-MiniLM-L12-v2/**（即需存在 `tokenizer.json`、`config.json`、`*.onnx` 等）。
-  - **目录结构**：若你的模型在 `<模型根>/paraphrase-multilingual-MiniLM-L12-v2/`，需让库能访问到 `<模型根>/Xenova/paraphrase-multilingual-MiniLM-L12-v2/`。可二选一：
-    1. 将模型放到 `<模型根>/Xenova/paraphrase-multilingual-MiniLM-L12-v2/`；或  
-    2. 保留 `<模型根>/paraphrase-multilingual-MiniLM-L12-v2/`，在 `<模型根>` 下新建 `Xenova` 目录，并建立目录联接（Windows）：  
-       `mklink /J "<模型根>\Xenova\paraphrase-multilingual-MiniLM-L12-v2" "<模型根>\paraphrase-multilingual-MiniLM-L12-v2"`
-  - **运行前设置环境变量**（PowerShell）：
-    ```powershell
-    $env:TRANSFORMERS_CACHE = "D:\my_models"   # 改为你的模型根目录
-    $env:TRANSFORMERS_LOCAL_ONLY = "1"
-    cd invoice-parser
-    npm run demo:hybrid
-    ```
-  - **验证模型是否加载成功**：`node src/nlp/verifyBert.js`（需同样设置上述两个环境变量）。
-- 生产环境可替换为云端 LLM API。
-
-## 排放因子数据库
-
-- **数据来源**：基于 **Emission factors.csv**（CPCD，原 cpcd_full_*.csv）及 **data/emission_factors.csv**，并内置电力/用水/燃料/制造业 EEIO 默认因子。
-- **factorService**：`getFactorByCategory(category, region)`、`getFactorByName(name)`、`getEEIOFactor(industry)`。
-- **factorManager**：`toKgCO2e(factor, amount)` 统一换算为 kgCO2e；数据来源标记与追溯。
-- 运行测试：`npm run test:factors`。
+解析错误通过 `Error` 抛出，日志带 `[InvoiceParser]` 前缀；核算在无效输入时返回 0 不抛错。
