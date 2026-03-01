@@ -8,7 +8,9 @@
     "test:mapping": "node src/mapping/testMapping.js",
     "test:nlp": "node src/nlp/testNLP.js",
     "demo:hybrid": "node src/nlp/demoHybrid.js",
-    "test:factors": "node src/factors/testFactors.js"
+    "test:factors": "node src/factors/testFactors.js",
+    "test:matching": "node src/matching/testMatching.js",
+    "demo:matching": "node src/matching/demoMatching.js"
   },
   "keywords": [
     "invoice",
