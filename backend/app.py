@@ -56,7 +56,7 @@ async def global_exception_handler(request: Request, exc: Exception):
     logger.exception("未捕获异常: %s %s", request.method, request.url.path)
     return JSONResponse(
         status_code=500,
-        content={"error": "内部服务器错误", "detail": str(exc)},
+        content={"error": "内部服务器错误", "detail": "服务器处理请求时发生错误，请稍后重试"},
     )
 
 # ---------- 注册路由 ----------

@@ -4,170 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>碳足迹 Agent</title>
-  <style>
-    :root {
-      --bg: #0f1419;
-      --card: #1a2332;
-      --text: #e6edf3;
-      --muted: #8b949e;
-      --accent: #58a6ff;
-      --success: #3fb950;
-      --border: #30363d;
-    }
-    * { box-sizing: border-box; }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      background: var(--bg);
-      color: var(--text);
-      min-height: 100vh;
-      margin: 0;
-      padding: 2rem;
-    }
-    .container {
-      max-width: 640px;
-      margin: 0 auto;
-    }
-    h1 {
-      font-size: 1.5rem;
-      margin-bottom: 0.5rem;
-      color: var(--text);
-    }
-    .subtitle {
-      color: var(--muted);
-      font-size: 0.9rem;
-      margin-bottom: 2rem;
-    }
-    .card {
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 1.5rem;
-      margin-bottom: 1.5rem;
-    }
-    .form-row {
-      display: flex;
-      gap: 0.75rem;
-      margin-bottom: 1rem;
-    }
-    input, select, textarea {
-      background: var(--bg);
-      border: 1px solid var(--border);
-      color: var(--text);
-      padding: 0.6rem 0.9rem;
-      border-radius: 8px;
-      font-size: 0.95rem;
-      width: 100%;
-    }
-    input:focus, select:focus, textarea:focus {
-      outline: none;
-      border-color: var(--accent);
-      box-shadow: 0 0 0 2px rgba(88,166,255,0.2);
-    }
-    button {
-      background: var(--accent);
-      color: #fff;
-      border: none;
-      padding: 0.65rem 1.25rem;
-      border-radius: 8px;
-      font-size: 0.95rem;
-      cursor: pointer;
-      transition: opacity 0.2s;
-    }
-    button:hover { opacity: 0.9; }
-    button:disabled { opacity: 0.5; cursor: not-allowed; }
-    button.secondary {
-      background: transparent;
-      border: 1px solid var(--border);
-      color: var(--text);
-    }
-    .result {
-      margin-top: 1rem;
-    }
-    .result-item {
-      display: flex;
-      justify-content: space-between;
-      padding: 0.5rem 0;
-      border-bottom: 1px solid var(--border);
-      font-size: 0.9rem;
-    }
-    .result-item:last-child { border-bottom: none; }
-    .result-item .k { color: var(--muted); }
-    .result-item .v { color: var(--success); font-weight: 500; }
-    .error { color: #f85149; }
-    .source-tag {
-      display: inline-block;
-      padding: 0.2rem 0.5rem;
-      border-radius: 4px;
-      font-size: 0.75rem;
-      background: rgba(63,185,80,0.2);
-      color: var(--success);
-    }
-    .source-tag.cpcd { background: rgba(88,166,255,0.2); color: var(--accent); }
-    .source-tag.custom { background: rgba(63,185,80,0.2); color: var(--success); }
-    .tabs {
-      display: flex;
-      gap: 0.5rem;
-      margin-bottom: 1rem;
-    }
-    .tabs button {
-      background: transparent;
-      color: var(--muted);
-      border: 1px solid var(--border);
-    }
-    .tabs button.active {
-      background: var(--accent);
-      color: #fff;
-      border-color: var(--accent);
-    }
-    .panel { display: none; }
-    .panel.show { display: block; }
-    .add-form label { display: block; margin-bottom: 0.3rem; color: var(--muted); font-size: 0.85rem; }
-    .add-form .row { margin-bottom: 1rem; }
-    .product-list { max-height: 200px; overflow-y: auto; }
-    .product-list .item {
-      padding: 0.5rem;
-      border-bottom: 1px solid var(--border);
-      font-size: 0.9rem;
-    }
-    .scope-tag {
-      display: inline-block;
-      padding: 0.2rem 0.5rem;
-      border-radius: 4px;
-      font-size: 0.75rem;
-    }
-    .scope-tag.scope1 { background: rgba(248,81,73,0.2); color: #f85149; }
-    .scope-tag.scope2 { background: rgba(210,153,34,0.2); color: #d29922; }
-    .scope-tag.scope3 { background: rgba(88,166,255,0.2); color: var(--accent); }
-    .stats-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-      gap: 0.75rem;
-      margin-bottom: 1rem;
-    }
-    .stat-card {
-      background: var(--bg);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 1rem;
-      text-align: center;
-    }
-    .stat-card .label { color: var(--muted); font-size: 0.8rem; margin-bottom: 0.3rem; }
-    .stat-card .value { color: var(--success); font-size: 1.3rem; font-weight: 600; }
-    .category-table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 0.85rem;
-    }
-    .category-table th, .category-table td {
-      padding: 0.5rem;
-      border-bottom: 1px solid var(--border);
-      text-align: left;
-    }
-    .category-table th { color: var(--muted); font-weight: 500; }
-    .api-status { font-size: 0.75rem; color: var(--muted); margin-top: 0.5rem; }
-    .api-status.ok { color: var(--success); }
-    .api-status.err { color: #f85149; }
-  </style>
+  <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
   <div class="container">
@@ -175,32 +12,78 @@
     <p class="subtitle">输入产品名称查询碳足迹，或上传发票进行分类与排放核算</p>
     <p class="api-status" id="apiStatus">检测服务...</p>
 
-    <div class="tabs">
-      <button type="button" class="active" data-tab="query">查询</button>
-      <button type="button" data-tab="invoice">发票上传</button>
-      <button type="button" data-tab="stats">统计</button>
-      <button type="button" data-tab="add">新增数据</button>
-      <button type="button" data-tab="list">自定义列表</button>
+    <!-- 顶部导航 -->
+    <div class="tabs main-tabs">
+      <button type="button" class="active" data-tab="query">产品查询</button>
+      <button type="button" data-tab="invoice">发票分析</button>
+      <button type="button" data-tab="manage">数据管理</button>
+      <button type="button" data-tab="stats">统计报表</button>
     </div>
 
-    <!-- 查询面板 -->
+    <!-- ───────────────────────────────────────────────── -->
+    <!-- 面板1：产品查询                                    -->
+    <!-- ───────────────────────────────────────────────── -->
     <div class="panel show" id="panel-query">
       <div class="card">
         <div class="form-row">
           <input type="text" id="productInput" placeholder="输入产品名称，如：电力、汽油、鸡蛋、光伏" autofocus>
-          <button id="btnQuery" style="min-width: 100px;">查询</button>
+          <button id="btnQuery">查询</button>
+          <button class="secondary" id="btnClear">清空</button>
         </div>
+        <div id="queryHistory"></div>
         <div class="result" id="result"></div>
       </div>
     </div>
 
-    <!-- 新增面板 -->
-    <div class="panel" id="panel-add">
+    <!-- ───────────────────────────────────────────────── -->
+    <!-- 面板2：发票分析                                    -->
+    <!-- ───────────────────────────────────────────────── -->
+    <div class="panel" id="panel-invoice">
       <div class="card">
+        <div class="tabs" style="margin-bottom:1rem;">
+          <button type="button" class="active" data-invoice-mode="file">PDF 上传</button>
+          <button type="button" data-invoice-mode="json">JSON 提交</button>
+        </div>
+
+        <div id="invoiceFileSection">
+          <form class="add-form" id="invoiceForm" enctype="multipart/form-data">
+            <div class="row">
+              <label>选择 PDF 发票文件 *</label>
+              <input type="file" id="invoiceFile" accept=".pdf" style="padding:0.6rem;cursor:pointer;">
+            </div>
+            <p style="color:var(--muted);font-size:0.8rem;margin:0 0 1rem;">
+              支持中国增值税电子发票 PDF，系统将自动提取明细行并分类至 Scope 1/2/3
+            </p>
+            <button type="submit" id="btnUpload">上传并分类</button>
+          </form>
+        </div>
+
+        <div id="invoiceJsonSection" style="display:none;">
+          <div class="row add-form">
+            <label>发票 JSON（需含 lines 或 items，可选 seller、invoice_number、total_amount）</label>
+            <textarea id="invoiceJsonInput" rows="10"
+              placeholder='{"lines":[{"name":"电力*电费*","amount":4000,"quantity":5000,"unit":"度"}],"seller":{"name":"国网上海"},"invoice_number":"INV001"}'
+              style="font-family:monospace;font-size:0.85rem;"></textarea>
+          </div>
+          <button type="button" id="btnSubmitJson">提交并核算</button>
+        </div>
+
+        <div id="invoiceResult" class="result"></div>
+      </div>
+    </div>
+
+    <!-- ───────────────────────────────────────────────── -->
+    <!-- 面板3：数据管理                                    -->
+    <!-- ───────────────────────────────────────────────── -->
+    <div class="panel" id="panel-manage">
+      <!-- 新增产品表单 -->
+      <div class="card">
+        <h3 style="margin-top:0;font-size:1.05rem;">新增自定义产品</h3>
         <form class="add-form" id="addForm">
           <div class="row">
             <label>产品名称 *</label>
-            <input type="text" name="product_name" placeholder="如：自定义办公纸" required>
+            <input type="text" name="product_name" placeholder="如：自定义办公纸">
+            <div class="field-error" id="errProductName">请输入产品名称</div>
           </div>
           <div class="row">
             <label>碳种类 *</label>
@@ -208,11 +91,11 @@
           </div>
           <div class="row">
             <label>碳足迹描述</label>
-            <input type="text" name="carbon_footprint" placeholder="如：1.2kgCO2e / 千克">
+            <input type="text" name="carbon_footprint" placeholder="如：1.2kgCO2e/千克">
           </div>
           <div class="form-row">
             <div class="row" style="flex:1">
-              <label>每单位 CO2 (kg) *</label>
+              <label>每单位 CO₂ (kg) *</label>
               <input type="number" name="co2_per_unit" step="0.001" placeholder="1.2" required>
             </div>
             <div class="row" style="flex:1">
@@ -228,338 +111,46 @@
             <label>备注</label>
             <textarea name="remark" rows="2" placeholder="可选"></textarea>
           </div>
-          <button type="submit">添加</button>
+          <button type="submit">添加产品</button>
         </form>
         <div id="addMsg" class="result" style="margin-top:1rem"></div>
       </div>
-    </div>
 
-    <!-- 列表面板 -->
-    <div class="panel" id="panel-list">
+      <!-- 产品列表 -->
       <div class="card">
+        <h3 style="margin-top:0;font-size:1.05rem;">自定义产品列表</h3>
+        <div class="toolbar">
+          <input type="text" id="searchProduct" placeholder="按名称搜索...">
+          <button class="secondary" id="btnSortEmission">按排放量排序 ↓</button>
+          <button class="secondary" id="btnExportProducts">导出 CSV</button>
+        </div>
         <div class="product-list" id="productList">加载中...</div>
       </div>
     </div>
 
-    <!-- 发票上传面板 -->
-    <div class="panel" id="panel-invoice">
-      <div class="card">
-        <div class="tabs" style="margin-bottom:1rem;">
-          <button type="button" class="active" data-invoice-mode="file">PDF 上传</button>
-          <button type="button" data-invoice-mode="json">JSON 提交</button>
-        </div>
-        <div id="invoiceFileSection">
-          <form class="add-form" id="invoiceForm" enctype="multipart/form-data">
-            <div class="row">
-              <label>选择 PDF 发票文件 *</label>
-              <input type="file" id="invoiceFile" accept=".pdf"
-                     style="padding:0.6rem;cursor:pointer;">
-            </div>
-            <p style="color:var(--muted);font-size:0.8rem;margin:0 0 1rem;">
-              支持中国增值税电子发票 PDF，系统将自动提取明细行并分类至 Scope 1/2/3
-            </p>
-            <button type="submit" id="btnUpload">上传并分类</button>
-          </form>
-        </div>
-        <div id="invoiceJsonSection" style="display:none;">
-          <div class="row">
-            <label>发票 JSON（需含 lines 或 items，可选 seller、invoice_number、total_amount）</label>
-            <textarea id="invoiceJsonInput" rows="10" placeholder='{"lines":[{"name":"电力*电费*","amount":4000,"quantity":5000,"unit":"度"}],"seller":{"name":"国网上海"},"invoice_number":"INV001"}' style="font-family:monospace;font-size:0.85rem;"></textarea>
-          </div>
-          <button type="button" id="btnSubmitJson">提交并核算</button>
-        </div>
-        <div id="invoiceResult" class="result"></div>
-      </div>
-    </div>
-
-    <!-- 统计面板 -->
+    <!-- ───────────────────────────────────────────────── -->
+    <!-- 面板4：统计报表                                    -->
+    <!-- ───────────────────────────────────────────────── -->
     <div class="panel" id="panel-stats">
       <div class="card">
-        <h3 style="margin-top:0;font-size:1.1rem;">发票类别统计</h3>
+        <h3 style="margin-top:0;font-size:1.05rem;">发票类别统计</h3>
         <div class="stats-grid" id="statsGrid">加载中...</div>
-        <h3 style="font-size:1.1rem;">类别明细记录</h3>
-        <div style="max-height:300px;overflow-y:auto;" id="categoryList">加载中...</div>
+        <h3 style="font-size:1.05rem;">类别明细记录</h3>
+        <div style="max-height:360px;overflow-y:auto;" id="categoryList">加载中...</div>
+      </div>
+
+      <!-- 图表占位 -->
+      <div class="card">
+        <h3 style="margin-top:0;font-size:1.05rem;">图表分析</h3>
+        <div class="chart-placeholder">
+          📊 图表功能即将上线<br>
+          <span style="font-size:0.8rem;">将支持各 Scope 排放趋势、行业分布饼图等可视化分析</span>
+        </div>
       </div>
     </div>
-  </div>
+  </div><!-- /.container -->
 
-  <script>
-    const API = window.location.origin;
-    const $ = id => document.getElementById(id);
-    const resultEl = $('result');
-    const productInput = $('productInput');
-    const btnQuery = $('btnQuery');
-    const addForm = $('addForm');
-    const addMsg = $('addMsg');
-    const productList = $('productList');
-    const invoiceForm = $('invoiceForm');
-    const invoiceResult = $('invoiceResult');
-
-    async function checkHealth() {
-      const el = $('apiStatus');
-      try {
-        const res = await fetch(API + '/api/health');
-        const data = await res.json();
-        el.textContent = data.service ? data.service + ' 运行正常' : '服务正常';
-        el.className = 'api-status ok';
-      } catch (e) {
-        el.textContent = '无法连接后端，请确认已运行 python run_server.py';
-        el.className = 'api-status err';
-      }
-    }
-    checkHealth();
-
-    function showResult(data) {
-      if (data.source === 'none') {
-        resultEl.innerHTML = `<p class="error">${data.message || '未找到匹配'}</p>`;
-        return;
-      }
-      const tag = data.source === 'custom' ? 'custom' : 'cpcd';
-      const rows = [
-        ['来源', `<span class="source-tag ${tag}">${data.source === 'custom' ? '自定义' : 'CPCD'}</span>`],
-        ['产品名称', data.product_name],
-        ['碳种类', data.carbon_type],
-        ['碳足迹', data.carbon_footprint || '-'],
-        ['CO2当量 (kg/单位)', data.co2_per_unit_kg != null ? data.co2_per_unit_kg : '-'],
-        ['单位', data.unit || '-'],
-        ['碳成本 (元/单位)', data.carbon_cost_cny != null ? '¥' + data.carbon_cost_cny : '-'],
-      ];
-      if (data.similarity != null) rows.splice(1, 0, ['相似度', data.similarity]);
-      resultEl.innerHTML = '<div class="result-item"><span class="k">' + rows.map(([k,v]) => `<span class="k">${k}</span></div><div class="result-item"><span class="v">${v}</span>`).join('</div><div class="result-item"><span class="k">') + '</span></div>';
-      resultEl.innerHTML = rows.map(([k,v]) => `<div class="result-item"><span class="k">${k}</span><span class="v">${v}</span></div>`).join('');
-    }
-
-    async function query() {
-      const name = productInput.value.trim();
-      if (!name) { resultEl.innerHTML = '<p class="error">请输入产品名称</p>'; return; }
-      btnQuery.disabled = true;
-      resultEl.innerHTML = '查询中...';
-      try {
-        const res = await fetch(API + '/api/match', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ product_name: name }),
-        });
-        let data;
-        const text = await res.text();
-        try {
-          data = text ? JSON.parse(text) : {};
-        } catch (_) {
-          throw new Error('服务器返回了非 JSON 响应，请稍后重试。' + (res.status === 500 ? ' 若为首次查询，可能是 CPCD 数据文件未就绪。' : ''));
-        }
-        if (!res.ok) throw new Error(data.detail || data.message || '请求失败');
-        showResult(data);
-      } catch (e) {
-        resultEl.innerHTML = `<p class="error">${e.message}</p>`;
-      } finally {
-        btnQuery.disabled = false;
-      }
-    }
-
-    btnQuery.addEventListener('click', query);
-    productInput.addEventListener('keydown', e => { if (e.key === 'Enter') query(); });
-
-    addForm.addEventListener('submit', async e => {
-      e.preventDefault();
-      const fd = new FormData(addForm);
-      const body = {
-        product_name: fd.get('product_name'),
-        carbon_type: fd.get('carbon_type'),
-        carbon_footprint: fd.get('carbon_footprint') || '',
-        co2_per_unit: parseFloat(fd.get('co2_per_unit')),
-        unit: fd.get('unit'),
-        price_per_ton: parseFloat(fd.get('price_per_ton')) || 100,
-        remark: fd.get('remark') || '',
-      };
-      addMsg.innerHTML = '提交中...';
-      try {
-        const res = await fetch(API + '/api/products', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.detail || '添加失败');
-        addMsg.innerHTML = '<span class="v">✓ 添加成功</span>';
-        addForm.reset();
-        loadProductList();
-      } catch (e) {
-        addMsg.innerHTML = `<span class="error">${e.message}</span>`;
-      }
-    });
-
-    async function loadProductList() {
-      try {
-        const res = await fetch(API + '/api/products');
-        const list = await res.json();
-        productList.innerHTML = list.length ? list.map(p => `<div class="item">${p.product_name} | ${p.carbon_type} | ${p.carbon_footprint || '-'} | ${p.co2_per_unit} kg/${p.unit}</div>`).join('') : '暂无自定义数据';
-      } catch {
-        productList.innerHTML = '加载失败';
-      }
-    }
-
-    /* ---------- 发票 PDF 上传 ---------- */
-    invoiceForm.addEventListener('submit', async e => {
-      e.preventDefault();
-      const fileInput = $('invoiceFile');
-      if (!fileInput.files || !fileInput.files.length) {
-        invoiceResult.innerHTML = '<p class="error">请选择 PDF 发票文件</p>';
-        return;
-      }
-      const formData = new FormData();
-      formData.append('file', fileInput.files[0]);
-
-      $('btnUpload').disabled = true;
-      invoiceResult.innerHTML = '解析中，请稍候...';
-      try {
-        const res = await fetch(API + '/api/invoice/upload', {
-          method: 'POST',
-          body: formData,
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.detail || '上传失败');
-        showInvoiceResult(data);
-      } catch (e) {
-        invoiceResult.innerHTML = `<p class="error">${e.message}</p>`;
-      } finally {
-        $('btnUpload').disabled = false;
-      }
-    });
-
-    /* ---------- 发票 JSON 提交 ---------- */
-    document.querySelectorAll('[data-invoice-mode]').forEach(btn => {
-      btn.addEventListener('click', () => {
-        document.querySelectorAll('[data-invoice-mode]').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-        const isJson = btn.dataset.invoiceMode === 'json';
-        $('invoiceFileSection').style.display = isJson ? 'none' : 'block';
-        $('invoiceJsonSection').style.display = isJson ? 'block' : 'none';
-      });
-    });
-
-    $('btnSubmitJson').addEventListener('click', async () => {
-      const raw = $('invoiceJsonInput').value.trim();
-      if (!raw) {
-        invoiceResult.innerHTML = '<p class="error">请输入发票 JSON</p>';
-        return;
-      }
-      let body;
-      try {
-        body = JSON.parse(raw);
-      } catch (e) {
-        invoiceResult.innerHTML = '<p class="error">JSON 格式错误：' + e.message + '</p>';
-        return;
-      }
-      if (!body.lines && !body.items) {
-        invoiceResult.innerHTML = '<p class="error">JSON 需包含 lines 或 items 数组</p>';
-        return;
-      }
-      $('btnSubmitJson').disabled = true;
-      invoiceResult.innerHTML = '处理中...';
-      try {
-        const res = await fetch(API + '/api/invoice/process', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.detail || '处理失败');
-        showInvoiceResult(data);
-      } catch (e) {
-        invoiceResult.innerHTML = `<p class="error">${e.message}</p>`;
-      } finally {
-        $('btnSubmitJson').disabled = false;
-      }
-    });
-
-    function scopeClass(scope) {
-      if (scope.includes('1')) return 'scope1';
-      if (scope.includes('2')) return 'scope2';
-      return 'scope3';
-    }
-
-    function showInvoiceResult(data) {
-      let html = `<p class="v" style="margin-bottom:0.75rem;">✓ ${data.message}</p>`;
-      if (data.invoice_number || data.seller) {
-        html += '<div style="margin-bottom:0.75rem;font-size:0.9rem;color:var(--muted);">';
-        if (data.invoice_number) html += `发票号码：${data.invoice_number}　`;
-        if (data.seller) html += `销方：${data.seller}`;
-        html += '</div>';
-      }
-      if (data.total_emissions_kg != null) {
-        html += `<div class="stat-card" style="margin-bottom:0.75rem;"><div class="label">总排放</div><div class="value">${data.total_emissions_kg} kgCO2e</div></div>`;
-      }
-      if (data.aggregate) {
-        html += '<div class="stats-grid">';
-        for (const [scope, kg] of Object.entries(data.aggregate)) {
-          html += `<div class="stat-card"><div class="label">${scope}</div><div class="value">${kg} kg</div></div>`;
-        }
-        html += '</div>';
-      }
-      if (data.lines && data.lines.length) {
-        html += '<table class="category-table"><tr><th>名称</th><th>范围</th><th>匹配方式</th><th>金额</th><th>排放(kg)</th></tr>';
-        for (const l of data.lines) {
-          html += `<tr><td>${l.name}</td><td><span class="scope-tag ${scopeClass(l.scope)}">${l.scope}</span></td><td>${l.match_type}</td><td>¥${l.amount}</td><td>${l.emission_kg}</td></tr>`;
-        }
-        html += '</table>';
-      }
-      invoiceResult.innerHTML = html;
-    }
-
-    /* ---------- 统计 ---------- */
-    async function loadStats() {
-      const statsGrid = $('statsGrid');
-      const categoryList = $('categoryList');
-      try {
-        const [statsRes, catRes] = await Promise.all([
-          fetch(API + '/api/invoice/stats'),
-          fetch(API + '/api/invoice/categories'),
-        ]);
-        const stats = await statsRes.json();
-        const categories = await catRes.json();
-
-        if (Object.keys(stats).length) {
-          let totalCount = 0, totalAmount = 0, totalEmission = 0;
-          let cardsHtml = '';
-          for (const [scope, s] of Object.entries(stats)) {
-            totalCount += s.count;
-            totalAmount += s.total_amount;
-            totalEmission += s.total_emission_kg;
-            cardsHtml += `<div class="stat-card"><div class="label">${scope}</div><div class="value">${s.count} 条</div><div style="color:var(--muted);font-size:0.8rem;">¥${s.total_amount} | ${s.total_emission_kg} kg</div></div>`;
-          }
-          statsGrid.innerHTML = `<div class="stat-card"><div class="label">总计</div><div class="value">${totalCount} 条</div><div style="color:var(--muted);font-size:0.8rem;">¥${totalAmount.toFixed(2)} | ${totalEmission.toFixed(4)} kg</div></div>` + cardsHtml;
-        } else {
-          statsGrid.innerHTML = '<p style="color:var(--muted)">暂无统计数据，请先上传发票</p>';
-        }
-
-        if (categories.length) {
-          let tbl = '<table class="category-table"><tr><th>发票号</th><th>名称</th><th>范围</th><th>匹配</th><th>金额</th><th>排放(kg)</th><th>时间</th></tr>';
-          for (const c of categories) {
-            tbl += `<tr><td>${c.invoice_number || '-'}</td><td>${c.line_name}</td><td><span class="scope-tag ${scopeClass(c.scope)}">${c.scope}</span></td><td>${c.match_type}</td><td>¥${c.amount}</td><td>${c.emission_kg}</td><td>${c.created_at || '-'}</td></tr>`;
-          }
-          tbl += '</table>';
-          categoryList.innerHTML = tbl;
-        } else {
-          categoryList.innerHTML = '<p style="color:var(--muted)">暂无类别记录</p>';
-        }
-      } catch {
-        statsGrid.innerHTML = '加载失败';
-        categoryList.innerHTML = '';
-      }
-    }
-
-    document.querySelectorAll('.tabs button').forEach(btn => {
-      btn.addEventListener('click', () => {
-        document.querySelectorAll('.tabs button').forEach(b => b.classList.remove('active'));
-        document.querySelectorAll('.panel').forEach(p => p.classList.remove('show'));
-        btn.classList.add('active');
-        $('panel-' + btn.dataset.tab).classList.add('show');
-        if (btn.dataset.tab === 'list') loadProductList();
-        if (btn.dataset.tab === 'stats') loadStats();
-      });
-    });
-
-    loadProductList();
-  </script>
+  <!-- Toast 容器由 app.js 动态创建 -->
+  <script src="/static/app.js"></script>
 </body>
 </html>

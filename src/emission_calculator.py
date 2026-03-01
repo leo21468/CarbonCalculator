@@ -125,7 +125,6 @@ class EmissionCalculator:
             nights = line.quantity
         elif line.amount > 0:
             # 情形二：仅有总金额，按城市均价反推间夜
-            city_price = _HOTEL_KG_PER_NIGHT  # 初始化防止未赋值
             city_price_per_night = _HOTEL_CITY_PRICE.get("默认", 300)
             seller_name = getattr(classified.line, "_seller_name", "") or ""
             for city, price in _HOTEL_CITY_PRICE.items():
