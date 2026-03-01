@@ -164,12 +164,16 @@
       text-align: left;
     }
     .category-table th { color: var(--muted); font-weight: 500; }
+    .api-status { font-size: 0.75rem; color: var(--muted); margin-top: 0.5rem; }
+    .api-status.ok { color: var(--success); }
+    .api-status.err { color: #f85149; }
   </style>
 </head>
 <body>
   <div class="container">
     <h1>碳足迹 Agent</h1>
-    <p class="subtitle">输入产品名称，查询碳种类、二氧化碳当量及碳成本价格</p>
+    <p class="subtitle">输入产品名称查询碳足迹，或上传发票进行分类与排放核算</p>
+    <p class="api-status" id="apiStatus">检测服务...</p>
 
     <div class="tabs">
       <button type="button" class="active" data-tab="query">查询</button>
@@ -240,17 +244,30 @@
     <!-- 发票上传面板 -->
     <div class="panel" id="panel-invoice">
       <div class="card">
-        <form class="add-form" id="invoiceForm" enctype="multipart/form-data">
+        <div class="tabs" style="margin-bottom:1rem;">
+          <button type="button" class="active" data-invoice-mode="file">PDF 上传</button>
+          <button type="button" data-invoice-mode="json">JSON 提交</button>
+        </div>
+        <div id="invoiceFileSection">
+          <form class="add-form" id="invoiceForm" enctype="multipart/form-data">
+            <div class="row">
+              <label>选择 PDF 发票文件 *</label>
+              <input type="file" id="invoiceFile" accept=".pdf"
+                     style="padding:0.6rem;cursor:pointer;">
+            </div>
+            <p style="color:var(--muted);font-size:0.8rem;margin:0 0 1rem;">
+              支持中国增值税电子发票 PDF，系统将自动提取明细行并分类至 Scope 1/2/3
+            </p>
+            <button type="submit" id="btnUpload">上传并分类</button>
+          </form>
+        </div>
+        <div id="invoiceJsonSection" style="display:none;">
           <div class="row">
-            <label>选择 PDF 发票文件 *</label>
-            <input type="file" id="invoiceFile" accept=".pdf" required
-                   style="padding:0.6rem;cursor:pointer;">
+            <label>发票 JSON（需含 lines 或 items，可选 seller、invoice_number、total_amount）</label>
+            <textarea id="invoiceJsonInput" rows="10" placeholder='{"lines":[{"name":"电力*电费*","amount":4000,"quantity":5000,"unit":"度"}],"seller":{"name":"国网上海"},"invoice_number":"INV001"}' style="font-family:monospace;font-size:0.85rem;"></textarea>
           </div>
-          <p style="color:var(--muted);font-size:0.8rem;margin:0 0 1rem;">
-            支持中国增值税电子发票 PDF，系统将自动提取明细行并分类至 Scope 1/2/3
-          </p>
-          <button type="submit" id="btnUpload">上传并分类</button>
-        </form>
+          <button type="button" id="btnSubmitJson">提交并核算</button>
+        </div>
         <div id="invoiceResult" class="result"></div>
       </div>
     </div>
@@ -277,6 +294,20 @@
     const productList = $('productList');
     const invoiceForm = $('invoiceForm');
     const invoiceResult = $('invoiceResult');
+
+    async function checkHealth() {
+      const el = $('apiStatus');
+      try {
+        const res = await fetch(API + '/api/health');
+        const data = await res.json();
+        el.textContent = data.service ? data.service + ' 运行正常' : '服务正常';
+        el.className = 'api-status ok';
+      } catch (e) {
+        el.textContent = '无法连接后端，请确认已运行 python run_server.py';
+        el.className = 'api-status err';
+      }
+    }
+    checkHealth();
 
     function showResult(data) {
       if (data.source === 'none') {
@@ -389,6 +420,52 @@
       }
     });
 
+    /* ---------- 发票 JSON 提交 ---------- */
+    document.querySelectorAll('[data-invoice-mode]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('[data-invoice-mode]').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        const isJson = btn.dataset.invoiceMode === 'json';
+        $('invoiceFileSection').style.display = isJson ? 'none' : 'block';
+        $('invoiceJsonSection').style.display = isJson ? 'block' : 'none';
+      });
+    });
+
+    $('btnSubmitJson').addEventListener('click', async () => {
+      const raw = $('invoiceJsonInput').value.trim();
+      if (!raw) {
+        invoiceResult.innerHTML = '<p class="error">请输入发票 JSON</p>';
+        return;
+      }
+      let body;
+      try {
+        body = JSON.parse(raw);
+      } catch (e) {
+        invoiceResult.innerHTML = '<p class="error">JSON 格式错误：' + e.message + '</p>';
+        return;
+      }
+      if (!body.lines && !body.items) {
+        invoiceResult.innerHTML = '<p class="error">JSON 需包含 lines 或 items 数组</p>';
+        return;
+      }
+      $('btnSubmitJson').disabled = true;
+      invoiceResult.innerHTML = '处理中...';
+      try {
+        const res = await fetch(API + '/api/invoice/process', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || '处理失败');
+        showInvoiceResult(data);
+      } catch (e) {
+        invoiceResult.innerHTML = `<p class="error">${e.message}</p>`;
+      } finally {
+        $('btnSubmitJson').disabled = false;
+      }
+    });
+
     function scopeClass(scope) {
       if (scope.includes('1')) return 'scope1';
       if (scope.includes('2')) return 'scope2';
@@ -402,6 +479,9 @@
         if (data.invoice_number) html += `发票号码：${data.invoice_number}　`;
         if (data.seller) html += `销方：${data.seller}`;
         html += '</div>';
+      }
+      if (data.total_emissions_kg != null) {
+        html += `<div class="stat-card" style="margin-bottom:0.75rem;"><div class="label">总排放</div><div class="value">${data.total_emissions_kg} kgCO2e</div></div>`;
       }
       if (data.aggregate) {
         html += '<div class="stats-grid">';

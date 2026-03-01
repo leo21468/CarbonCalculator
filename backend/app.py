@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from typing import List, Optional
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, HTTPException, UploadFile, File, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -72,6 +72,13 @@ class ProductAddRequest(BaseModel):
 frontend_dir = ROOT / "frontend"
 if frontend_dir.exists():
     app.mount("/static", StaticFiles(directory=str(frontend_dir)), name="static")
+
+
+# ---------- 健康检查 ----------
+@app.get("/api/health")
+def health():
+    """服务健康检查，用于前端判断接口可用性"""
+    return {"status": "ok", "service": "碳足迹 Agent API"}
 
 
 # ---------- API ----------
@@ -222,6 +229,7 @@ async def upload_invoice(file: UploadFile = File(...)):
 
     # 构建响应
     aggregate = result.get("aggregate_kg", {})
+    total_emissions_kg = sum(aggregate.values()) if aggregate else 0.0
     lines_result = []
     for i, cl in enumerate(classified):
         lines_result.append({
@@ -237,6 +245,7 @@ async def upload_invoice(file: UploadFile = File(...)):
         "message": f"发票处理完成，共 {len(classified)} 条明细",
         "invoice_number": invoice.invoice_number,
         "seller": invoice.seller.name if invoice.seller else None,
+        "total_emissions_kg": round(total_emissions_kg, 4),
         "lines": lines_result,
         "aggregate": {
             scope.value: round(kg, 4)
@@ -269,6 +278,77 @@ def get_invoice_categories():
 def get_invoice_stats():
     """按 Scope 汇总发票类别统计"""
     return get_invoice_category_stats()
+
+
+@app.post("/api/invoice/process")
+def process_invoice_json(body: dict = Body(...)):
+    """
+    直接提交发票 JSON 进行分类与核算（无需上传文件）。
+    请求体格式：{ "lines": [{ "name", "amount", "tax_classification_code?", "quantity?", "unit?" }], "seller": { "name" }, "invoice_number?", "total_amount?" }
+    """
+    if not body:
+        raise HTTPException(status_code=400, detail="请求体不能为空")
+    pipeline = _get_pipeline()
+    try:
+        result = pipeline.process_invoice_from_dict(body)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"发票数据解析失败：{e}")
+
+    classified = result.get("classified", [])
+    emission_results = result.get("emission_results", [])
+    aggregate = result.get("aggregate_kg", {})
+
+    emission_map = {}
+    for i, er in enumerate(emission_results):
+        emission_map[i] = er.emission_kg
+
+    invoice_number = (body.get("invoice_number") or "").strip() or None
+    seller_name = None
+    if isinstance(body.get("seller"), dict):
+        seller_name = body["seller"].get("name")
+    elif body.get("seller"):
+        seller_name = str(body["seller"])
+
+    # 写入类别统计（若有发票号）
+    if invoice_number and classified:
+        records = []
+        for i, cl in enumerate(classified):
+            records.append(InvoiceCategoryRecord(
+                id=None,
+                invoice_number=invoice_number,
+                line_name=cl.line.name,
+                scope=cl.scope.value,
+                match_type=cl.match_type,
+                amount=cl.line.amount,
+                emission_kg=emission_map.get(i, 0.0),
+                tax_code=cl.matched_tax_code,
+            ))
+        add_invoice_categories_batch(records)
+
+    total_emissions_kg = sum(aggregate.values()) if aggregate else 0.0
+    lines_result = [
+        {
+            "name": cl.line.name,
+            "scope": cl.scope.value,
+            "match_type": cl.match_type,
+            "amount": cl.line.amount,
+            "emission_kg": round(emission_map.get(i, 0.0), 4),
+            "tax_code": cl.matched_tax_code,
+        }
+        for i, cl in enumerate(classified)
+    ]
+
+    return {
+        "message": f"发票处理完成，共 {len(classified)} 条明细",
+        "invoice_number": invoice_number,
+        "seller": seller_name,
+        "total_emissions_kg": round(total_emissions_kg, 4),
+        "lines": lines_result,
+        "aggregate": {
+            scope.value: round(kg, 4)
+            for scope, kg in aggregate.items()
+        },
+    }
 
 
 if __name__ == "__main__":
