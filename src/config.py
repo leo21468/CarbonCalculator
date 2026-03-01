@@ -21,6 +21,7 @@ class CarbonPriceConfig:
 class ScopeMappingConfig:
     """税收编码→排放范围映射配置"""
     ref_table_path: Optional[Path] = None  # reference table.xlsx 路径，默认项目根目录
+    ref_db_path: Optional[Path] = None       # SQLite 路径，默认 data/reference_table.db；优先于 xlsx
 
 
 @dataclass

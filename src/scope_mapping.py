@@ -1,18 +1,20 @@
 """
 第二步（一）：税收分类编码 → 排放范围 映射表加载与查询。
-优先使用项目根目录的 reference table.xlsx；若无则回退到 data/ 下 CSV、YAML。
+优先从 SQLite（data/reference_table.db）加载，避免重复解析大 xlsx；
+若无 DB 则使用 reference table.xlsx，再回退到 data/ 下 CSV、YAML。
 """
 from __future__ import annotations
+import sqlite3
 from pathlib import Path
 from typing import List, Optional, Tuple
 import pandas as pd
-import math
 
 from .models import Scope
 
 _ROOT = Path(__file__).resolve().parents[1]
 _DATA = _ROOT / "data"
 _REF_TABLE = _ROOT / "reference table.xlsx"
+_REF_DB = _DATA / "reference_table.db"
 
 # 可能的 Excel 列名映射（兼容中英文）
 _SCOPE_COL_NAMES = ("排放范围", "scope", "Scope", "碳排放范围", "范围")
@@ -42,9 +44,10 @@ def _normalize_scope(val) -> Optional[Scope]:
 
 
 def _parse_exclude(val) -> List[str]:
-    """解析排除关键词列：分号/逗号分隔"""
-    # Use proper NaN checking
-    if val is None or pd.isna(val):
+    """解析排除关键词列：分号/逗号分隔（支持字符串或 None）"""
+    if val is None:
+        return []
+    if hasattr(pd, 'isna') and pd.isna(val):
         return []
     s = str(val).strip()
     if not s:
@@ -53,6 +56,35 @@ def _parse_exclude(val) -> List[str]:
         if sep in s:
             return [x.strip() for x in s.split(sep) if x.strip()]
     return [s] if s else []
+
+
+def _load_from_db(db_path: Optional[Path] = None) -> List[Tuple[str, Scope, List[str], str]]:
+    """
+    从 SQLite 加载映射规则（由 scripts/import_reference_table_to_db.py 导入 xlsx 生成）。
+    返回 [(tax_code_prefix, scope, exclude_keywords, emission_factor_id), ...]
+    """
+    p = db_path or _REF_DB
+    if not p.exists():
+        return []
+    try:
+        conn = sqlite3.connect(str(p))
+        cur = conn.execute(
+            "SELECT tax_code, scope, exclude_keywords, emission_factor_id FROM reference_mapping ORDER BY LENGTH(tax_code) DESC"
+        )
+        rows = []
+        for row in cur.fetchall():
+            tax_code, scope_str, exclude_str, factor_id = row[0], row[1], row[2] or "", row[3] or "default"
+            scope = _normalize_scope(scope_str)
+            if scope is None:
+                continue
+            exclude = _parse_exclude(exclude_str)
+            if not tax_code or not str(tax_code).strip():
+                continue
+            rows.append((str(tax_code).strip(), scope, exclude, factor_id))
+        conn.close()
+        return rows
+    except Exception:
+        return []
 
 
 def _find_col(df, candidates: tuple) -> Optional[str]:
@@ -163,42 +195,48 @@ def _load_yaml_mapping() -> List[dict]:
 class TaxCodeScopeMapper:
     """
     19位税号 / 前缀 / 关键词 → Scope + 排放因子ID。
-    优先从 reference table.xlsx 构建规则；若无则用 YAML/CSV。
+    优先从 SQLite（data/reference_table.db）加载；若无则从 reference table.xlsx，再回退到 YAML/CSV。
     """
-    def __init__(self, ref_table_path: Optional[Path] = None):
+    def __init__(self, ref_table_path: Optional[Path] = None, ref_db_path: Optional[Path] = None):
         self._ref_table = Path(ref_table_path) if ref_table_path else _REF_TABLE
+        self._ref_db = Path(ref_db_path) if ref_db_path else _REF_DB
         self._prefix_to_scope: List[Tuple[str, Scope, List[str], str]] = []
         self._keyword_rules: List[Tuple[List[str], Scope, List[str], str]] = []
         self._default_scope = Scope.SCOPE_3
         self._build()
 
     def _build(self) -> None:
-        # 1) 优先从 reference table.xlsx 加载
-        excel_rows = _load_excel_mapping(self._ref_table) if self._ref_table.exists() else []
-        if excel_rows:
-            self._prefix_to_scope = excel_rows
+        # 1) 优先从 SQLite 加载（xlsx 已导入 DB 时使用，避免大文件重复解析）
+        db_rows = _load_from_db(self._ref_db)
+        if db_rows:
+            self._prefix_to_scope = db_rows
         else:
-            # 2) 回退到 YAML
-            yaml_rules = _load_yaml_mapping()
-            for r in yaml_rules:
-                scope_name = r.get("scope", "Scope 3")
-                try:
-                    scope = Scope(scope_name)
-                except ValueError:
-                    scope = Scope.SCOPE_3
-                factor_id = r.get("emission_factor_id", "default")
-                exclude = r.get("exclude_keywords") or []
-                for prefix in r.get("tax_code_prefixes") or []:
-                    self._prefix_to_scope.append((str(prefix).strip(), scope, exclude, factor_id))
-                kws = r.get("keywords") or []
-                if kws:
-                    self._keyword_rules.append((kws, scope, exclude, factor_id))
+            # 2) 回退到 reference table.xlsx
+            excel_rows = _load_excel_mapping(self._ref_table) if self._ref_table.exists() else []
+            if excel_rows:
+                self._prefix_to_scope = excel_rows
+            else:
+                # 3) 回退到 YAML
+                yaml_rules = _load_yaml_mapping()
+                for r in yaml_rules:
+                    scope_name = r.get("scope", "Scope 3")
+                    try:
+                        scope = Scope(scope_name)
+                    except ValueError:
+                        scope = Scope.SCOPE_3
+                    factor_id = r.get("emission_factor_id", "default")
+                    exclude = r.get("exclude_keywords") or []
+                    for prefix in r.get("tax_code_prefixes") or []:
+                        self._prefix_to_scope.append((str(prefix).strip(), scope, exclude, factor_id))
+                    kws = r.get("keywords") or []
+                    if kws:
+                        self._keyword_rules.append((kws, scope, exclude, factor_id))
 
-            # 3) 再用 CSV 补充
-            for prefix, scope, _desc, exclude, factor_id in _load_csv_mapping():
-                self._prefix_to_scope.append((prefix, scope, exclude, factor_id))
+                # 4) 再用 CSV 补充
+                for prefix, scope, _desc, exclude, factor_id in _load_csv_mapping():
+                    self._prefix_to_scope.append((prefix, scope, exclude, factor_id))
 
-        # Excel 加载时暂不填充 keyword_rules，仅用前缀；若需关键词可后续从 YAML 补充
+        # Excel/DB 加载时仅填充前缀规则；关键词规则从 YAML 补充
         if not self._keyword_rules:
             yaml_rules = _load_yaml_mapping()
             for r in yaml_rules:

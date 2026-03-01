@@ -31,6 +31,7 @@ class CarbonAccountingPipeline:
         self.parser = JsonXmlInvoiceParser()
         self.classifier = InvoiceScopeClassifier(
             ref_table_path=self.config.scope_mapping.ref_table_path,
+            ref_db_path=self.config.scope_mapping.ref_db_path,
         )
         self.calculator = EmissionCalculator()
 
