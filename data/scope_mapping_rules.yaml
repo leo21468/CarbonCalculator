@@ -32,13 +32,30 @@ rules:
     emission_factor_id: refined_oil
     exclude_keywords: ["沥青", "蜡", "碳黑", "润滑油", "石蜡"]
 
+  - scope: Scope 1
+    name: 员工通勤加油（汽油发票）
+    tax_code_prefixes: []
+    keywords: ["加油", "车用汽油", "车用柴油"]
+    emission_factor_id: gasoline_liter
+    exclude_keywords: []
+    note: "员工通勤汽油发票：有升数时用 gasoline_liter 活动数据法，否则用金额 EEIO"
+
   # ---------- Scope 2：外购电、热、冷 ----------
   - scope: Scope 2
     name: 电力热力冷气
     tax_code_prefixes: ["109", "110"]
-    keywords: ["电力", "电费", "热力", "冷气", "供暖"]
+    keywords: ["电力", "电费", "热力", "冷气", "供暖", "供热", "冷暖", "空调费"]
     emission_factor_id: electricity_heat
     exclude_keywords: []
+
+  # ---------- Scope 3：用水 ----------
+  - scope: Scope 3
+    name: 办公用水及污水
+    tax_code_prefixes: ["111", "112"]
+    keywords: ["自来水", "用水", "水费", "污水", "排水", "给水"]
+    emission_factor_id: water
+    exclude_keywords: []
+    note: "有m³数量时用活动数据法(0.168 kgCO2e/m³)，否则EEIO"
 
   # ---------- Scope 3：租赁默认、服务一刀切 ----------
   - scope: Scope 3
@@ -55,6 +72,64 @@ rules:
     keywords: ["服务", "劳务", "运输", "物流", "快递", "咨询", "IT", "电信", "顺丰", "EMS"]
     emission_factor_id: scope3_service
     exclude_keywords: []
+
+  # ---------- Scope 3：办公耗材 ----------
+  - scope: Scope 3
+    name: 办公耗材
+    tax_code_prefixes: []
+    keywords: ["办公用品", "文具", "纸张", "打印耗材", "墨盒", "碳粉", "复印纸", "A4纸", "办公设备"]
+    emission_factor_id: scope3_office_supply
+    exclude_keywords: []
+    note: "全面采用EEIO方法，NLP自动识别分类至造纸/计算机设备制造业等行业因子"
+
+  # ---------- Scope 3：差旅 ----------
+  - scope: Scope 3
+    name: 航空差旅
+    tax_code_prefixes: []
+    keywords: ["机票", "航空", "航班", "飞机票", "民航", "国航", "南航", "东航", "空运"]
+    emission_factor_id: scope3_transport_air
+    exclude_keywords: []
+
+  - scope: Scope 3
+    name: 铁路差旅
+    tax_code_prefixes: []
+    keywords: ["高铁", "动车", "火车票", "铁路", "高速铁路", "城际铁路"]
+    emission_factor_id: scope3_transport_rail
+    exclude_keywords: []
+
+  - scope: Scope 3
+    name: 公路差旅/打车/租车
+    tax_code_prefixes: []
+    keywords: ["打车", "出租车", "网约车", "滴滴", "出行费", "交通费", "租车费", "长途汽车", "大巴"]
+    emission_factor_id: scope3_transport_road
+    exclude_keywords: []
+
+  # ---------- Scope 3：住宿 ----------
+  - scope: Scope 3
+    name: 住宿
+    tax_code_prefixes: []
+    keywords: ["住宿", "酒店", "宾馆", "旅馆", "民宿", "客房", "住房费", "房费"]
+    emission_factor_id: scope3_accommodation
+    exclude_keywords: []
+    note: "有入住天数时直接计算；否则按城市均价反推间夜数（参考财政部差标）再乘CHSB因子"
+
+  # ---------- Scope 3：员工通勤 ----------
+  - scope: Scope 3
+    name: 员工通勤（公交/地铁补贴）
+    tax_code_prefixes: []
+    keywords: ["公交", "地铁", "地铁充值", "公共交通", "通勤补贴", "交通补贴", "月票"]
+    emission_factor_id: scope3_commute
+    exclude_keywords: []
+    note: "碳排量=充值金额×城市公共交通EEIO因子，仅核算企业财务支持的通勤"
+
+  # ---------- Scope 3：废弃物处理 ----------
+  - scope: Scope 3
+    name: 办公垃圾处置
+    tax_code_prefixes: []
+    keywords: ["垃圾清运", "废弃物", "环卫", "垃圾处理", "清洁费", "保洁费"]
+    emission_factor_id: scope3_waste
+    exclude_keywords: []
+    note: "使用EEIO方法：垃圾清运费金额×废弃物处理行业EEIO因子(来源:CEADS)"
 
 # 兜底：未匹配到的全部 Scope 3
 default_scope: Scope 3

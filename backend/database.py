@@ -65,7 +65,34 @@ def _init_db(conn: sqlite3.Connection) -> None:
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
+    # 数据库版本表（迁移机制）
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS schema_version (
+            version INTEGER PRIMARY KEY,
+            applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    # 索引：提升查询性能
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_product_name ON custom_products(product_name)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_invoice_scope ON invoice_categories(scope)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_invoice_number ON invoice_categories(invoice_number)"
+    )
+    _apply_migrations(conn)
     conn.commit()
+
+
+def _apply_migrations(conn: sqlite3.Connection) -> None:
+    """检查并自动应用数据库迁移"""
+    row = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()
+    current = row[0] if row and row[0] is not None else 0
+    # 版本1：初始化（无需额外操作，表已在 _init_db 中创建）
+    if current < 1:
+        conn.execute("INSERT OR IGNORE INTO schema_version(version) VALUES(1)")
 
 
 def get_connection() -> sqlite3.Connection:
@@ -91,12 +118,19 @@ def add_product(p: CustomProduct) -> int:
         conn.close()
 
 
-def list_products() -> List[CustomProduct]:
+def list_products(name_filter: Optional[str] = None) -> List[CustomProduct]:
     conn = get_connection()
     try:
-        rows = conn.execute(
-            "SELECT id, product_name, carbon_type, carbon_footprint, co2_per_unit, unit, price_per_ton, remark FROM custom_products ORDER BY id DESC"
-        ).fetchall()
+        if name_filter:
+            escaped = name_filter.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            rows = conn.execute(
+                "SELECT id, product_name, carbon_type, carbon_footprint, co2_per_unit, unit, price_per_ton, remark FROM custom_products WHERE product_name LIKE ? ESCAPE '\\' ORDER BY id DESC",
+                (f"%{escaped}%",),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT id, product_name, carbon_type, carbon_footprint, co2_per_unit, unit, price_per_ton, remark FROM custom_products ORDER BY id DESC"
+            ).fetchall()
         return [
             CustomProduct(
                 id=r["id"],
@@ -134,6 +168,34 @@ def find_by_name(product_name: str) -> Optional[CustomProduct]:
             price_per_ton=r["price_per_ton"],
             remark=r["remark"] or "",
         )
+    finally:
+        conn.close()
+
+
+def delete_product(product_id: int) -> bool:
+    """删除产品，返回是否成功删除"""
+    conn = get_connection()
+    try:
+        cur = conn.execute("DELETE FROM custom_products WHERE id = ?", (product_id,))
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+def update_product(product_id: int, fields: dict) -> bool:
+    """部分更新产品字段，返回是否成功更新"""
+    allowed = {"product_name", "carbon_type", "carbon_footprint", "co2_per_unit", "unit", "price_per_ton", "remark"}
+    updates = {k: v for k, v in fields.items() if k in allowed}
+    if not updates:
+        return False
+    conn = get_connection()
+    try:
+        set_clause = ", ".join(f"{k} = ?" for k in updates)
+        values = list(updates.values()) + [product_id]
+        cur = conn.execute(f"UPDATE custom_products SET {set_clause} WHERE id = ?", values)
+        conn.commit()
+        return cur.rowcount > 0
     finally:
         conn.close()
 

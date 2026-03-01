@@ -22,7 +22,22 @@ UNIT_NORMALIZE = {
     "m³": "m3",
     "元": "CNY",
     "cny": "CNY",
+    # 用水单位
+    "吨(水)": "m3",
+    "t(水)": "m3",
 }
+
+# 各城市酒店差旅日均费用参考（元/间夜，来源：财政部差旅费管理办法"其他人员"标准）
+# 用于住宿发票无入住天数时反推间夜数
+_HOTEL_CITY_PRICE: dict = {
+    "北京": 500, "上海": 500, "广州": 400, "深圳": 400,
+    "成都": 350, "杭州": 350, "南京": 350, "武汉": 350,
+    "天津": 350, "重庆": 300, "西安": 300, "长沙": 300,
+    "默认": 300,
+}
+
+# 住宿碳排放因子（kgCO2e/间夜，参考 CHSB 中国均值）
+_HOTEL_KG_PER_NIGHT = 15.0
 
 
 class EmissionCalculator:
@@ -48,9 +63,12 @@ class EmissionCalculator:
         unit = factor.get("unit", "CNY")
         kg_per_unit = factor.get("kg_co2e_per_unit", 0.0)
 
+        # 住宿发票特殊处理：有入住天数用间夜法，否则按城市均价反推
+        if factor_id == "scope3_accommodation":
+            return self._calculate_accommodation(classified, line)
+
         # 活动数据法：有数量且单位可映射
         if line.quantity is not None and line.quantity > 0 and line.unit:
-            # Guard against None before calling strip()
             unit_str = str(line.unit).strip() if line.unit else ""
             normalized_unit = UNIT_NORMALIZE.get(unit_str, unit_str)
             if normalized_unit == unit:
@@ -93,6 +111,40 @@ class EmissionCalculator:
                 factor_used=k,
             )
         return None
+
+    def _calculate_accommodation(
+        self, classified: ClassifiedLineItem, line: "InvoiceLineItem"
+    ) -> Optional[EmissionResult]:
+        """
+        住宿发票排放计算。
+        优先使用发票中的入住天数（quantity），若无则根据城市均价反推间夜数。
+        参考：财政部差旅费管理办法 + CHSB 均值 15 kgCO2e/间夜。
+        """
+        if line.quantity is not None and line.quantity > 0:
+            # 情形一：发票已记录入住天数
+            nights = line.quantity
+        elif line.amount > 0:
+            # 情形二：仅有总金额，按城市均价反推间夜
+            city_price = _HOTEL_KG_PER_NIGHT  # 初始化防止未赋值
+            city_price_per_night = _HOTEL_CITY_PRICE.get("默认", 300)
+            seller_name = getattr(classified.line, "_seller_name", "") or ""
+            for city, price in _HOTEL_CITY_PRICE.items():
+                if city != "默认" and city in seller_name:
+                    city_price_per_night = price
+                    break
+            nights = max(1, int(line.amount / city_price_per_night))
+        else:
+            return None
+
+        emission_kg = nights * _HOTEL_KG_PER_NIGHT
+        return EmissionResult(
+            scope=classified.scope,
+            quantity=nights,
+            unit="间夜",
+            emission_kg=emission_kg,
+            method="activity",
+            factor_used=_HOTEL_KG_PER_NIGHT,
+        )
 
     def calculate_batch(self, classified_lines: List[ClassifiedLineItem]) -> List[EmissionResult]:
         """批量计算，过滤掉 None"""

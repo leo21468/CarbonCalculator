@@ -5,6 +5,15 @@ coal,Scope 1,t,2550,原煤
 oil_gas,Scope 1,t,2300,原油/天然气当量
 gas,Scope 1,m3,2.0,燃气(立方米)
 refined_oil,Scope 1,L,2.3,成品油(升)
+water,Scope 3,m3,0.168,市政自来水(GB/T 51366-2019)
 scope3_default,Scope 3,CNY,0.00015,EEIO默认(万元产值kg，此处按元)
 scope3_lease,Scope 3,CNY,0.00012,租赁
 scope3_service,Scope 3,CNY,0.0001,服务/物流
+scope3_office_supply,Scope 3,CNY,0.00025,办公耗材(造纸/文具/计算机设备 EEIO)
+scope3_transport_air,Scope 3,CNY,0.00035,航空差旅 EEIO
+scope3_transport_rail,Scope 3,CNY,0.000055,铁路/高铁差旅 EEIO
+scope3_transport_road,Scope 3,CNY,0.00022,公路/打车/租车 EEIO
+scope3_accommodation,Scope 3,CNY,0.00018,住宿(酒店) EEIO
+scope3_waste,Scope 3,CNY,0.00008,废弃物处理/垃圾清运 EEIO
+scope3_commute,Scope 3,CNY,0.00012,员工通勤(公共交通补贴) EEIO
+gasoline_liter,Scope 1,L,2.295,汽油燃烧(升) 通勤加油发票
