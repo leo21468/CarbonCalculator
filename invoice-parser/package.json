@@ -10,7 +10,8 @@
     "demo:hybrid": "node src/nlp/demoHybrid.js",
     "test:factors": "node src/factors/testFactors.js",
     "test:matching": "node src/matching/testMatching.js",
-    "demo:matching": "node src/matching/demoMatching.js"
+    "demo:matching": "node src/matching/demoMatching.js",
+    "test:calculation": "node src/calculation/testCalculator.js"
   },
   "keywords": [
     "invoice",
