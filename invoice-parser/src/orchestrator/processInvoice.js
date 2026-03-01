@@ -16,16 +16,19 @@ const {
   getRegionFromContext,
   EmissionResult,
 } = require('../index');
+const auditLogger = require('../audit/auditLogger');
 
 /**
  * 处理单张发票（支持文件路径或发票对象）
  * @param {string|Object} input - 文件路径 或 已解析的发票对象 { items, totalAmount, sellerName, ... }
- * @param {{ region?: string }} [options]
- * @returns {Promise<{ result: EmissionResult, invoice: Object, logs: Array<{ step: string, message: string, data?: any }> }>}
+ * @param {{ region?: string, enableAudit?: boolean }} [options]
+ * @returns {Promise<{ result: EmissionResult, invoice: Object, logs: Array<{ step: string, message: string, data?: any }>, auditTrail?: Object }>}
  */
 async function processSingleInvoice(input, options = {}) {
   const logs = [];
   let invoice;
+  const enableAudit = options.enableAudit === true;
+  let trail = null;
 
   try {
     // 步骤1：解析发票
@@ -42,6 +45,17 @@ async function processSingleInvoice(input, options = {}) {
     }
 
     const invObj = invoice && typeof invoice.toObject === 'function' ? invoice.toObject() : invoice;
+    const invoiceId = invObj.invoiceNumber || invObj.invoiceId || `inv_${Date.now()}`;
+    if (enableAudit) {
+      trail = auditLogger.createTrail(invoiceId);
+      auditLogger.logStep(trail, {
+        stepName: '解析',
+        input: { filePath: typeof input === 'string' ? input : null, itemCount: invObj.items ? invObj.items.length : 0 },
+        output: { invoiceNumber: invObj.invoiceNumber, totalAmount: invObj.totalAmount },
+        rules: 'parser (OFD/PDF/XML/JSON)',
+      });
+    }
+
     const context = { region: options.region, sellerAddress: invObj.sellerAddress || invObj.sellerName, buyerAddress: invObj.buyerAddress || invObj.buyerName };
     context.region = context.region || getRegionFromContext(context);
 
@@ -69,18 +83,43 @@ async function processSingleInvoice(input, options = {}) {
       });
       result.recalcSummary();
       logs.push({ step: '6_scenario', message: `场景识别: ${scenario.type}`, data: scenario.result });
-      return { result, invoice: invObj, logs };
+      if (trail) {
+        auditLogger.logStep(trail, { stepName: '场景专项', input: invObj, output: scenario.result, rules: `scenarios.${scenario.type}`, confidence: '中' });
+        auditLogger.finalize(trail, result);
+      }
+      return { result, invoice: invObj, logs, auditTrail: trail || undefined };
     }
 
     // 步骤2～5：按明细分类、增强、匹配、计算
     const classified = step2ClassifyScope(invObj);
     logs.push({ step: '2_scope', message: `范围分类: ${classified.length} 条`, data: classified.map((c) => ({ scope: c.classification.scope, reason: c.classification.reason })) });
+    if (trail) {
+      auditLogger.logStep(trail, {
+        stepName: '分类',
+        input: invObj.items,
+        output: classified.map((c) => ({ scope: c.classification.scope, reason: c.classification.reason })),
+        rules: 'classifyByTaxCode / scopeMappingTable',
+        confidence: classified[0]?.classification?.confidence,
+      });
+    }
 
     const enhanced = await step3SemanticEnhance(classified);
     logs.push({ step: '3_nlp', message: `语义增强: ${enhanced.length} 条` });
+    if (trail) {
+      auditLogger.logStep(trail, { stepName: '语义增强', input: classified.map((c) => c.item.name), output: enhanced.length, rules: 'processGoodsName / NLP', confidence: null });
+    }
 
     const matched = step4MatchFactors(enhanced.map((e) => ({ item: e.item, classification: e.classification })), context);
     logs.push({ step: '4_match', message: `因子匹配: ${matched.length} 条` });
+    if (trail) {
+      auditLogger.logStep(trail, {
+        stepName: '匹配',
+        input: enhanced.map((e) => ({ name: e.item.name, amount: e.item.amount })),
+        output: matched.map((m) => ({ matchType: m.matched.matchType, factorName: m.matched.factor?.name, confidence: m.matched.confidence })),
+        rules: 'factorMatcher',
+        confidence: matched[0]?.matched?.confidence,
+      });
+    }
 
     const calculated = step5Calculate(matched);
     const resultItems = calculated.map((c) => ({
@@ -96,12 +135,23 @@ async function processSingleInvoice(input, options = {}) {
     const result = new EmissionResult({ items: resultItems, totalEmissions: 0, summary: { scope1: 0, scope2: 0, scope3: 0 } });
     result.recalcSummary();
     logs.push({ step: '5_calculate', message: `排放计算完成, 总排放: ${result.totalEmissions.toFixed(2)} kgCO2e` });
+    if (trail) {
+      auditLogger.logStep(trail, {
+        stepName: '计算',
+        input: matched.length,
+        output: { totalEmissions: result.totalEmissions, summary: result.summary, items: resultItems },
+        rules: 'calculator / calculationService',
+        confidence: resultItems.map((i) => i.confidence).join(','),
+      });
+      auditLogger.finalize(trail, result, { items: resultItems, classification: classified[0]?.classification });
+    }
 
-    return { result, invoice: invObj, logs };
+    return { result, invoice: invObj, logs, auditTrail: trail || undefined };
   } catch (err) {
     logs.push({ step: 'error', message: err.message, data: { stack: err.stack } });
+    if (trail) auditLogger.logStep(trail, { stepName: '错误', input: null, output: err.message, rules: null, confidence: null });
     const empty = new EmissionResult({ items: [], totalEmissions: 0, summary: { scope1: 0, scope2: 0, scope3: 0 } });
-    return { result: empty, invoice: invoice || null, logs };
+    return { result: empty, invoice: invoice || null, logs, auditTrail: trail || undefined };
   }
 }
 

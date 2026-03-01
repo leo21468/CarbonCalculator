@@ -19,14 +19,17 @@
    - **EEIO 支出法**：仅金额时，E = 金额 × 排放强度（kgCO2e/元）。  
    - **invoice-parser** 提供动态因子匹配（物理因子 / 行业 EEIO / 默认因子）、区域电网映射与双模式核算，输出总排放及 scope1/2/3 汇总。
 
-4. **第四步：碳利润表与双账本**  
+4. **审计追踪（invoice-parser）**  
+   - 可选记录每一步计算的来源与依据：解析 → 分类 → 语义增强 → 匹配 → 计算（或场景专项）。  
+   - 审计记录含步骤输入/输出、规则/模型、置信度及因子与分类的数据来源（物理因子库、EEIO 行业与版本、税收编码规则等）。  
+   - 支持按发票 ID 查询审计、导出 JSON/HTML 报告，HTML 模板可打印另存为 PDF。
+
+5. **第四步：碳利润表与双账本**  
    - 碳价：支持市场价（如上海环境能源交易所 CEA）或内部设定价。  
    - 成本归集到制造费用/销售费用/管理费用 - 碳成本。  
    - 碳利润表：营业收入、传统成本、毛利、直接/隐含碳成本、经碳调整后毛利、碳资产损益、净碳损益。  
    - 双账本：与财务凭证平行的碳会计分录。  
    - 报表洞察：产品线伪利润识别、供应链 Scope 3 议价依据。
-
-## 项目结构
 
 ```
 CarbonCalculator/
@@ -70,6 +73,9 @@ CarbonCalculator/
 │       ├── factors/              # 排放因子库（电力/燃料/EEIO）
 │       ├── matching/             # 动态因子匹配、置信度、区域电网
 │       ├── calculation/          # 活动数据法 + 支出法、批量核算
+│       ├── orchestrator/         # 端到端流程编排 processSingleInvoice / processBatchInvoice
+│       ├── audit/                # 审计追踪：auditTrail、auditLogger、dataProvenance、报告模板
+│       ├── scenarios/            # 场景专项（水电/住宿/交通等）
 │       └── models/               # Invoice、EmissionResult
 ├── scripts/
 │   └── import_reference_table_to_db.py   # xlsx → SQLite
@@ -107,6 +113,7 @@ npm run test:factors              # 排放因子
 npm run test:matching             # 因子匹配
 npm run demo:matching             # 匹配演示
 npm run test:calculation          # 双模式核算
+node src/audit/testAudit.js      # 审计追踪测试（生成 JSON/HTML 报告）
 ```
 
 详见 [invoice-parser/README.md](invoice-parser/README.md)。
@@ -140,17 +147,22 @@ out = pipeline.process_invoice_from_dict(invoice_data)
 
 ### 发票解析与碳核算（Node invoice-parser）
 
-```js
-const { parseInvoice } = require('./invoice-parser/src/parser/index');
-const { matchFactor } = require('./invoice-parser/src/matching/factorMatcher');
-const { calculateBatch } = require('./invoice-parser/src/calculation/batchCalculator');
+端到端单张/批量处理（解析 → 分类 → 语义增强 → 匹配 → 计算，或场景专项），可选审计追踪：
 
-const invoice = await parseInvoice('./path/to/invoice.pdf');
-const emissionResult = calculateBatch(invoice.items, {
-  sellerAddress: invoice.sellerName,
-  buyerAddress: invoice.buyerName,
-}, invoice.invoiceNumber);
-// emissionResult.totalEmissions, emissionResult.summary.scope1/2/3
+```js
+const { processSingleInvoice } = require('./invoice-parser/src/orchestrator/processInvoice');
+const auditLogger = require('./invoice-parser/src/audit/auditLogger');
+
+// 传入文件路径或发票对象，enableAudit 开启审计
+const { result, invoice, logs, auditTrail } = await processSingleInvoice('./path/to/invoice.pdf', {
+  region: '华东',
+  enableAudit: true,
+});
+
+// result.totalEmissions, result.summary.scope1/2/3
+// 导出审计报告
+const jsonReport = auditLogger.exportAuditReport(invoice.invoiceNumber, 'json');
+const htmlReport = auditLogger.exportAuditReport(invoice.invoiceNumber, 'html');  // 可打印为 PDF
 ```
 
 ### 碳足迹 Agent 前后端
