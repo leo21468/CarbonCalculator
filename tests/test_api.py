@@ -84,7 +84,9 @@ def test_match_empty(client):
 def test_match_product(client):
     r = client.post("/api/match", json={"product_name": "电力"})
     assert r.status_code == 200
-    data = r.json()
+    body = r.json()
+    assert body.get("success") is True
+    data = body.get("data", body)
     assert "product_name" in data
     assert "carbon_type" in data
     assert "source" in data
@@ -106,7 +108,8 @@ def test_add_and_match_custom(client):
     assert r1.status_code == 200
     r2 = client.post("/api/match", json={"product_name": "办公纸"})
     assert r2.status_code == 200
-    data = r2.json()
+    body = r2.json()
+    data = body.get("data", body)
     assert data.get("source") == "custom"
     assert "办公纸" in data.get("product_name", "")
 
@@ -119,7 +122,8 @@ def test_upload_invoice_pdf(client):
         files={"file": ("invoice.pdf", pdf_bytes, "application/pdf")},
     )
     assert r.status_code == 200
-    data = r.json()
+    body = r.json()
+    data = body.get("data", body)
     assert "lines" in data
     assert len(data["lines"]) >= 2
     assert "aggregate" in data
@@ -150,7 +154,8 @@ def test_invoice_stats_after_upload(client):
     # 查询统计
     r = client.get("/api/invoice/stats")
     assert r.status_code == 200
-    stats = r.json()
+    body = r.json()
+    stats = body.get("data", body)
     assert len(stats) > 0
     for scope, s in stats.items():
         assert "count" in s
@@ -167,7 +172,8 @@ def test_invoice_categories_after_upload(client):
     )
     r = client.get("/api/invoice/categories")
     assert r.status_code == 200
-    categories = r.json()
+    body = r.json()
+    categories = body.get("data", body)
     assert len(categories) >= 2
     for cat in categories:
         assert "line_name" in cat
@@ -179,4 +185,6 @@ def test_invoice_stats_empty(client):
     """无数据时统计接口应返回空"""
     r = client.get("/api/invoice/stats")
     assert r.status_code == 200
-    assert r.json() == {}
+    body = r.json()
+    stats = body.get("data", body)
+    assert stats == {}
