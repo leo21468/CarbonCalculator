@@ -32,6 +32,8 @@ const BUILTIN_FACTORS = [
   { id: 'eeio_steel', name: '钢铁业EEIO因子', category: FACTOR_CATEGORY.EEIO, subCategory: '钢铁', value: 0.00035, unit: 'kgCO2e/CNY', region: '全国', source: '投入产出表/EEIO默认', year: null, factorType: FACTOR_TYPE.EEIO },
   { id: 'eeio_cement', name: '水泥业EEIO因子', category: FACTOR_CATEGORY.EEIO, subCategory: '水泥', value: 0.00042, unit: 'kgCO2e/CNY', region: '全国', source: '投入产出表/EEIO默认', year: null, factorType: FACTOR_TYPE.EEIO },
   { id: 'eeio_default', name: '制造业EEIO默认因子', category: FACTOR_CATEGORY.EEIO, subCategory: '默认', value: 0.00015, unit: 'kgCO2e/CNY', region: '全国', source: 'data/emission_factors.csv(scope3_default)', year: null, factorType: FACTOR_TYPE.EEIO },
+  { id: 'material_steel', name: '钢材/钢板物理因子', category: FACTOR_CATEGORY.MATERIAL, subCategory: '钢材', value: 2000, unit: 'kgCO2e/t', region: '全国', source: 'LCA文献/钢铁行业平均', year: null, factorType: FACTOR_TYPE.PHYSICAL },
+  { id: 'material_cement', name: '水泥物理因子', category: FACTOR_CATEGORY.MATERIAL, subCategory: '水泥', value: 720, unit: 'kgCO2e/t', region: '全国', source: 'LCA文献', year: null, factorType: FACTOR_TYPE.PHYSICAL },
 ];
 
 let factorList = [];
