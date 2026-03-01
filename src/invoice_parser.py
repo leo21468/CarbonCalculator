@@ -232,7 +232,7 @@ class PdfInvoiceParser(BaseInvoiceParser):
         lines = []
         # 中国发票表格列名关键词
         name_keywords = ("货物", "名称", "劳务", "项目", "服务")
-        amount_keywords = ("金额", "价税合计")
+        amount_keywords = ("金额", "价税合计", "合计")
         qty_keywords = ("数量",)
         unit_keywords = ("单位",)
         price_keywords = ("单价",)
@@ -307,25 +307,7 @@ class PdfInvoiceParser(BaseInvoiceParser):
         import re
 
         lines = []
-
-        # Pre-process: merge lines where a *category*name is split across lines.
-        # A line that starts with '*' but contains no digits is likely a broken item name;
-        # merge it with the following line.
-        raw_lines = text.split("\n")
-        merged_lines = []
-        i = 0
-        while i < len(raw_lines):
-            line = raw_lines[i]
-            if line.strip().startswith("*") and not re.search(r"\d", line):
-                next_line = raw_lines[i + 1] if i + 1 < len(raw_lines) else ""
-                merged_lines.append(line.rstrip() + next_line.lstrip())
-                i += 2
-            else:
-                merged_lines.append(line)
-                i += 1
-        processed_text = "\n".join(merged_lines)
-
-        # Pattern 1: *类别*名称 + numbers (existing pattern)
+        # 匹配 *类别*名称 + 金额 的模式
         pattern = re.compile(
             r"(\*[^*]+\*[^\s]+)\s+"
             r"(?:(\d+(?:\.\d+)?)\s+)?"  # 数量（可选）
@@ -333,7 +315,7 @@ class PdfInvoiceParser(BaseInvoiceParser):
             r"(?:(\d+(?:\.\d+)?)\s+)?"  # 单价（可选）
             r"(\d+(?:\.\d+)?)"          # 金额
         )
-        for m in pattern.finditer(processed_text):
+        for m in pattern.finditer(text):
             name = m.group(1).strip()
             quantity = self._parse_number(m.group(2)) if m.group(2) else None
             unit = m.group(3).strip() if m.group(3) else None
@@ -347,36 +329,6 @@ class PdfInvoiceParser(BaseInvoiceParser):
                 unit_price=unit_price if unit_price and unit_price > 0 else None,
                 amount=amount,
             ))
-
-        # Pattern 2 (fallback): non-asterisk item names followed by numbers
-        if not lines:
-            pattern2 = re.compile(
-                r"([\u4e00-\u9fffA-Za-z][^\n]*?)\s+"
-                r"(?:(\d+(?:\.\d+)?)\s+)?"  # 数量（可选）
-                r"(?:([^\d\s]+)\s+)?"        # 单位（可选）
-                r"(?:(\d+(?:\.\d+)?)\s+)?"   # 单价（可选）
-                r"(\d+(?:\.\d+)?)"           # 金额
-            )
-            for m in pattern2.finditer(processed_text):
-                name = m.group(1).strip()
-                # Skip summary / header lines
-                if any(kw in name for kw in ("合计", "价税合计", "小计", "名称", "单价", "数量")):
-                    continue
-                quantity = self._parse_number(m.group(2)) if m.group(2) else None
-                unit = m.group(3).strip() if m.group(3) else None
-                unit_price = self._parse_number(m.group(4)) if m.group(4) else None
-                amount = self._parse_number(m.group(5)) or 0.0
-                if amount <= 0:
-                    continue
-                lines.append(InvoiceLineItem(
-                    name=name,
-                    tax_classification_name=None,
-                    quantity=quantity if quantity and quantity > 0 else None,
-                    unit=unit,
-                    unit_price=unit_price if unit_price and unit_price > 0 else None,
-                    amount=amount,
-                ))
-
         return lines
 
     @staticmethod
