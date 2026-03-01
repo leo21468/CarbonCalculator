@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Invoice>
+  <invoiceNumber>87654321</invoiceNumber>
+  <invoiceDate>2024-02-20</invoiceDate>
+  <sellerName>销方公司A</sellerName>
+  <sellerTaxId>91110000MA01111111</sellerTaxId>
+  <buyerName>购方公司B</buyerName>
+  <buyerTaxId>91110000MA02222222</buyerTaxId>
+  <FPDetail>
+    <Item>
+      <name>咨询费</name>
+      <taxCode>3040503000000000000</taxCode>
+      <amount>5000</amount>
+      <quantity>1</quantity>
+      <unit>项</unit>
+      <price>5000</price>
+    </Item>
+  </FPDetail>
+  <totalAmount>5000</totalAmount>
+</Invoice>
