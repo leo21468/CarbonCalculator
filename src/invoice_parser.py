@@ -157,6 +157,31 @@ class PdfInvoiceParser(BaseInvoiceParser):
         finally:
             pdf.close()
 
+    def _ocr_pdf(self, pdf) -> str:
+        """使用 PaddleOCR 对 PDF 各页图片进行 OCR，返回拼接文本"""
+        try:
+            from paddleocr import PaddleOCR
+        except ImportError:
+            raise ImportError("图片型 PDF 需要 PaddleOCR：pip install paddleocr")
+
+        if not hasattr(PdfInvoiceParser, '_ocr_instance') or PdfInvoiceParser._ocr_instance is None:
+            PdfInvoiceParser._ocr_instance = PaddleOCR(use_angle_cls=True, lang='ch', show_log=False)
+        ocr = PdfInvoiceParser._ocr_instance
+
+        import numpy as np
+        lines_all = []
+        for page in pdf.pages:
+            img = page.to_image(resolution=150).original  # PIL Image
+            result = ocr.ocr(np.array(img), cls=True)
+            if not result or not result[0]:
+                continue
+            items = sorted(result[0], key=lambda x: x[0][0][1])
+            for item in items:
+                text = item[1][0]
+                lines_all.append(text)
+
+        return "\n".join(lines_all)
+
     def _extract_invoice(self, pdf) -> Invoice:
         """从 PDF 中提取发票信息"""
         import re
@@ -168,6 +193,10 @@ class PdfInvoiceParser(BaseInvoiceParser):
             all_text += text + "\n"
             tables = page.extract_tables() or []
             all_tables.extend(tables)
+
+        # 若文本过少（图片型 PDF），尝试 OCR 兜底
+        if len(all_text.strip()) < 20:
+            all_text = self._ocr_pdf(pdf)
 
         inv = Invoice(source_format="PDF")
 
