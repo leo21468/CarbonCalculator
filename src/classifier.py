@@ -16,8 +16,8 @@ class InvoiceScopeClassifier:
     一级分类：国家税收分类编码与 GHG Protocol 预设映射表（优先 reference table.xlsx）；
     宽泛条目：关键词或语义向量判定。
     """
-    def __init__(self, ref_table_path: Optional[Path] = None):
-        self.mapper = TaxCodeScopeMapper(ref_table_path=ref_table_path)
+    def __init__(self, ref_table_path: Optional[Path] = None, ref_db_path: Optional[Path] = None):
+        self.mapper = TaxCodeScopeMapper(ref_table_path=ref_table_path, ref_db_path=ref_db_path)
 
     def classify_invoice(self, invoice: Invoice) -> List[ClassifiedLineItem]:
         """对整张发票的每一行进行分类"""

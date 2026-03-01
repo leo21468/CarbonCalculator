@@ -1,0 +1,19 @@
+{
+  "invoiceNumber": "12345678",
+  "invoiceDate": "2024-01-15",
+  "sellerName": "测试销方企业",
+  "sellerTaxId": "91110000MA01234567",
+  "buyerName": "测试购方企业",
+  "buyerTaxId": "91110000MA07654321",
+  "items": [
+    {
+      "name": "技术服务",
+      "taxCode": "3040502000000000000",
+      "amount": 10000,
+      "quantity": 1,
+      "unit": "项",
+      "price": 10000
+    }
+  ],
+  "totalAmount": 10000
+}

@@ -28,8 +28,10 @@
 
 ```
 CarbonCalculator/
-├── reference table.xlsx           # 税收分类编码→排放范围映射表（优先加载）
+├── reference table.xlsx           # 税收分类编码→排放范围映射表（可导入 SQLite 后由程序优先读 DB）
 ├── data/
+│   ├── reference_table.db         # （可选）由脚本从 xlsx 导入的 SQLite，避免重复解析大 xlsx
+│   ├── reference_schema.sql       # 参考表 DB 建表语句
 │   ├── tax_code_to_scope.csv      # 税号前缀 → Scope 简表（回退）
 │   ├── scope_mapping_rules.yaml   # 详细映射与排除/关键词规则（回退 + 关键词）
 │   └── emission_factors.csv       # 排放因子表（19位税号→因子）
@@ -138,7 +140,13 @@ st = pipeline.build_statement(
 
 ### 映射表与因子
 
-- **19 位税号 → Scope**：优先从项目根目录 `reference table.xlsx` 加载（支持列名：税收分类编码、排放范围、排除关键词、排放因子）；若文件不存在则回退到 `data/scope_mapping_rules.yaml` 与 `data/tax_code_to_scope.csv`。可通过 `AppConfig.scope_mapping.ref_table_path` 指定自定义路径。
+- **19 位税号 → Scope**：优先从 **SQLite** `data/reference_table.db` 加载（需先执行导入脚本）；若无 DB 则从项目根目录 `reference table.xlsx` 加载；再回退到 `data/scope_mapping_rules.yaml` 与 `data/tax_code_to_scope.csv`。可通过 `AppConfig.scope_mapping.ref_table_path` / `ref_db_path` 指定路径。
+- **将 xlsx 导入数据库（推荐，xlsx 行数较多时）**：
+  ```bash
+  python scripts/import_reference_table_to_db.py
+  # 或指定路径：--xlsx "path/to.xlsx" --db "data/reference_table.db"
+  ```
+  导入后程序自动优先读取 `data/reference_table.db`，不再重复解析大 xlsx。
 - **碳价**：不参与碳市场时使用内部价（如 100–300 元/吨）；履约时可对接上海环境能源交易所每日收盘价（见 `carbon_price_fetcher.py` 占位）。
 
 ## 设计依据
