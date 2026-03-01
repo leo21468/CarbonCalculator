@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>碳核算审计报告 - {{INVOICE_ID}}</title>
+  <style>
+    body { font-family: "Microsoft YaHei", sans-serif; max-width: 900px; margin: 0 auto; padding: 20px; color: #333; }
+    h1 { font-size: 1.5rem; border-bottom: 2px solid #2c5f2d; padding-bottom: 8px; }
+    h2 { font-size: 1.2rem; margin-top: 24px; color: #2c5f2d; }
+    table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 0.9rem; }
+    th, td { border: 1px solid #ddd; padding: 8px; text-align: left; vertical-align: top; }
+    th { background: #e8f5e9; }
+    pre { margin: 0; white-space: pre-wrap; word-break: break-all; font-size: 0.85rem; max-height: 200px; overflow: auto; }
+    .meta { color: #666; font-size: 0.9rem; margin-bottom: 16px; }
+    ul { padding-left: 20px; }
+    .print-btn { margin-top: 20px; padding: 10px 20px; background: #2c5f2d; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 1rem; }
+    .print-btn:hover { background: #234a24; }
+    @media print { .print-btn { display: none; } }
+  </style>
+</head>
+<body>
+  <h1>碳核算审计报告</h1>
+  <div class="meta">
+    <strong>审计 ID</strong>: {{AUDIT_ID}} &nbsp;|&nbsp;
+    <strong>时间</strong>: {{TIMESTAMP}} &nbsp;|&nbsp;
+    <strong>发票 ID</strong>: {{INVOICE_ID}}
+  </div>
+
+  <h2>处理步骤</h2>
+  <table>
+    <thead>
+      <tr>
+        <th style="width:2em">#</th>
+        <th style="width:6em">步骤</th>
+        <th>输入</th>
+        <th>输出</th>
+        <th style="width:12em">规则/模型</th>
+        <th style="width:4em">置信度</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{STEPS}}
+    </tbody>
+  </table>
+
+  <h2>数据来源</h2>
+  <ul>
+    {{DATA_SOURCES}}
+  </ul>
+
+  <h2>最终排放结果</h2>
+  <pre>{{FINAL_RESULT}}</pre>
+
+  <p><button class="print-btn" onclick="window.print()">打印 / 另存为 PDF</button></p>
+</body>
+</html>
