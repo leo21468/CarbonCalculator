@@ -263,7 +263,6 @@ class PdfInvoiceParser(BaseInvoiceParser):
         lines = []
         # 中国发票表格列名关键词
         name_keywords = ("货物", "名称", "劳务", "项目", "服务")
-        amount_keywords = ("金额", "价税合计")
         qty_keywords = ("数量",)
         unit_keywords = ("单位",)
         price_keywords = ("单价",)
@@ -279,7 +278,7 @@ class PdfInvoiceParser(BaseInvoiceParser):
             header_str = [str(h).strip() if h else "" for h in header]
 
             name_col = self._find_col_index(header_str, name_keywords)
-            amount_col = self._find_col_index(header_str, amount_keywords)
+            amount_col = self._find_amount_col_index(header_str)
             qty_col = self._find_col_index(header_str, qty_keywords)
             unit_col = self._find_col_index(header_str, unit_keywords)
             price_col = self._find_col_index(header_str, price_keywords)
@@ -320,6 +319,12 @@ class PdfInvoiceParser(BaseInvoiceParser):
                 tax_code = (
                     row_str[tax_code_col] if tax_code_col is not None and tax_code_col < len(row_str) else None
                 ) or None
+
+                # 若 amount 与 unit_price 接近（差距 < 2%），且 quantity > 1，
+                # 则认为 amount 实为单价被误存，纠正为 unit_price * quantity
+                if (unit_price and quantity and quantity > 1 and amount
+                        and abs(amount - unit_price) / (unit_price + 1e-9) < 0.02):  # 2% 误差阈值
+                    amount = unit_price * quantity
 
                 lines.append(InvoiceLineItem(
                     name=name,
@@ -366,10 +371,22 @@ class PdfInvoiceParser(BaseInvoiceParser):
         )
         for m in pattern.finditer(processed_text):
             name = m.group(1).strip()
-            quantity = self._parse_number(m.group(2)) if m.group(2) else None
+            # 提取本行名称之后的所有数字，按位置取值
+            name_end = m.start(1) + len(m.group(1))
+            eol = processed_text.find('\n', name_end)
+            line_rest = processed_text[name_end: eol if eol != -1 else len(processed_text)]
+            all_nums = re.findall(r'\d+(?:\.\d+)?', line_rest)
+            if len(all_nums) >= 4:
+                # 中国增值税发票固定列顺序：数量, 单价, 金额（不含税）, 税额
+                # 倒数第二个数字为金额（不含税），最后一个为税额（忽略）
+                quantity = self._parse_number(all_nums[0])
+                unit_price = self._parse_number(all_nums[-3])
+                amount = self._parse_number(all_nums[-2]) or 0.0
+            else:
+                quantity = self._parse_number(m.group(2)) if m.group(2) else None
+                unit_price = self._parse_number(m.group(4)) if m.group(4) else None
+                amount = self._parse_number(m.group(5)) or 0.0
             unit = m.group(3).strip() if m.group(3) else None
-            unit_price = self._parse_number(m.group(4)) if m.group(4) else None
-            amount = self._parse_number(m.group(5)) or 0.0
             lines.append(InvoiceLineItem(
                 name=name,
                 tax_classification_name=name,
@@ -393,10 +410,20 @@ class PdfInvoiceParser(BaseInvoiceParser):
                 # Skip summary / header lines
                 if any(kw in name for kw in ("合计", "价税合计", "小计", "名称", "单价", "数量")):
                     continue
-                quantity = self._parse_number(m.group(2)) if m.group(2) else None
+                # 提取本行名称之后的所有数字，按位置取值
+                name_end = m.start(1) + len(m.group(1))
+                eol = processed_text.find('\n', name_end)
+                line_rest = processed_text[name_end: eol if eol != -1 else len(processed_text)]
+                all_nums = re.findall(r'\d+(?:\.\d+)?', line_rest)
+                if len(all_nums) >= 4:
+                    quantity = self._parse_number(all_nums[0])
+                    unit_price = self._parse_number(all_nums[-3])
+                    amount = self._parse_number(all_nums[-2]) or 0.0
+                else:
+                    quantity = self._parse_number(m.group(2)) if m.group(2) else None
+                    unit_price = self._parse_number(m.group(4)) if m.group(4) else None
+                    amount = self._parse_number(m.group(5)) or 0.0
                 unit = m.group(3).strip() if m.group(3) else None
-                unit_price = self._parse_number(m.group(4)) if m.group(4) else None
-                amount = self._parse_number(m.group(5)) or 0.0
                 if amount <= 0:
                     continue
                 lines.append(InvoiceLineItem(
@@ -417,6 +444,23 @@ class PdfInvoiceParser(BaseInvoiceParser):
             for kw in keywords:
                 if kw in h:
                     return i
+        return None
+
+    @staticmethod
+    def _find_amount_col_index(header: List[str]) -> Union[int, None]:
+        """查找金额（不含税）列，优先精确匹配，显式排除含"税"字的列被误认为金额列"""
+        # 第一优先：精确匹配"不含税"相关列名
+        for i, h in enumerate(header):
+            if any(kw in h for kw in ("金额（不含税）", "不含税金额", "合计金额")):
+                return i
+        # 第二优先：含"金额"但不含"税"字（排除"税额"等列）
+        for i, h in enumerate(header):
+            if "金额" in h and "税" not in h:
+                return i
+        # 兜底：价税合计
+        for i, h in enumerate(header):
+            if "价税合计" in h:
+                return i
         return None
 
     @staticmethod
