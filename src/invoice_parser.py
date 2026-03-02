@@ -237,8 +237,11 @@ class PdfInvoiceParser(BaseInvoiceParser):
         finally:
             pdf.close()
 
-    def _ocr_pdf(self, pdf) -> str:
-        """使用 PaddleOCR 对 PDF 各页图片进行 OCR，返回拼接文本"""
+    def _ocr_pdf(self, pdf) -> tuple:
+        """使用 PaddleOCR 对 PDF 各页图片进行 OCR，返回 (文本, 结构化行列表) 元组。
+
+        结构化行列表格式：[{'text': str, 'words': [...], 'columns': [...]}]
+        """
         try:
             from paddleocr import PaddleOCR
         except ImportError:
@@ -251,18 +254,140 @@ class PdfInvoiceParser(BaseInvoiceParser):
         ocr = PdfInvoiceParser._ocr_instance
 
         import numpy as np
-        lines_all = []
+        all_items = []
         for page in pdf.pages:
             img = page.to_image(resolution=150).original  # PIL Image
             result = ocr.ocr(np.array(img), cls=True)
             if not result or not result[0]:
                 continue
-            items = sorted(result[0], key=lambda x: x[0][0][1])
-            for item in items:
-                text = item[1][0]
-                lines_all.append(text)
+            all_items.extend(result[0])
 
-        return "\n".join(lines_all)
+        structured = self._structure_postprocess(all_items)
+        text = "\n".join(row["text"] for row in structured)
+        return text, structured
+
+    @staticmethod
+    def _cluster_x_centers(centers: list, n_clusters: int) -> list:
+        """简单一维聚类：将 x 中心点分组为 n_clusters 个簇，返回每个中心对应的簇索引列表。
+
+        优先尝试使用 sklearn KMeans；不可用时回退到基于排序的均匀分箱策略。
+        """
+        if not centers or n_clusters <= 0:
+            return [0] * len(centers)
+        n = min(n_clusters, len(centers))
+        try:
+            from sklearn.cluster import KMeans
+            import numpy as np
+            km = KMeans(n_clusters=n, n_init=10, random_state=0)
+            labels = km.fit_predict(np.array(centers).reshape(-1, 1)).tolist()
+            # Relabel so that cluster with smallest centroid gets index 0
+            centroids = km.cluster_centers_.flatten().tolist()
+            order = sorted(range(n), key=lambda i: centroids[i])
+            remap = {old: new for new, old in enumerate(order)}
+            return [remap[l] for l in labels]
+        except Exception:
+            pass
+        # Fallback: sort-based uniform binning
+        sorted_vals = sorted(set(centers))
+        bin_size = max(1, len(sorted_vals) // n)
+        val_to_bin = {}
+        for idx, v in enumerate(sorted_vals):
+            val_to_bin[v] = min(idx // bin_size, n - 1)
+        return [val_to_bin[c] for c in centers]
+
+    def _structure_postprocess(self, ocr_results: list) -> list:
+        """将 PaddleOCR 结果后处理为结构化行列表。
+
+        输入：ocr_results — PaddleOCR ocr() 返回的 list of [bbox, (text, score)]
+        输出：[{'text': str, 'words': [{'text', 'x', 'y', 'w', 'h', 'score'}], 'columns': [str, ...]}]
+
+        策略：
+        1. 解析每项的中点坐标与 bbox 尺寸。
+        2. 按 y 中心值聚合同行词块（行阈值 = 平均字高的 0.6 倍）。
+        3. 对所有词块的 x 中心做一维聚类，估算列数。
+        4. 数值列（金额/数量/税额）对齐到右侧列。
+        5. 返回结构化行。
+        """
+        import re
+
+        if not ocr_results:
+            return []
+
+        # Step 1: Parse each recognition item
+        words = []
+        for item in ocr_results:
+            try:
+                bbox, (text, score) = item
+            except (TypeError, ValueError):
+                continue
+            xs = [pt[0] for pt in bbox]
+            ys = [pt[1] for pt in bbox]
+            x_min, x_max = min(xs), max(xs)
+            y_min, y_max = min(ys), max(ys)
+            cx = (x_min + x_max) / 2.0
+            cy = (y_min + y_max) / 2.0
+            w = x_max - x_min
+            h = y_max - y_min
+            words.append({"text": text, "score": score, "x": cx, "y": cy, "w": w, "h": h})
+
+        if not words:
+            return []
+
+        # Step 2: Group into rows by y-center proximity
+        avg_h = sum(w["h"] for w in words) / len(words)
+        y_threshold = avg_h * 0.6
+
+        words_sorted = sorted(words, key=lambda w: w["y"])
+        rows: list = []  # list of list of word dicts
+        for word in words_sorted:
+            placed = False
+            for row in rows:
+                row_cy = sum(w["y"] for w in row) / len(row)
+                if abs(word["y"] - row_cy) <= y_threshold:
+                    row.append(word)
+                    placed = True
+                    break
+            if not placed:
+                rows.append([word])
+
+        # Sort words within each row by x
+        for row in rows:
+            row.sort(key=lambda w: w["x"])
+
+        # Step 3: Estimate column count and cluster x centers
+        all_x = [w["x"] for row in rows for w in row]
+        avg_per_row = len(all_x) / max(len(rows), 1)
+        n_clusters = max(2, round(avg_per_row))
+        col_labels = self._cluster_x_centers(all_x, n_clusters)
+
+        # Assign column index to each word (global order matches all_x order)
+        idx = 0
+        for row in rows:
+            for word in row:
+                word["col"] = col_labels[idx]
+                idx += 1
+
+        # Step 4: Determine number of columns and build column arrays per row
+        num_cols = max(col_labels) + 1 if col_labels else 1
+        _re_numeric = re.compile(r'^[¥￥\-]?\d[\d,，. ]*$|^\d[\d,，.]*[元]?$')
+
+        structured_rows = []
+        for row in rows:
+            columns = [""] * num_cols
+            for word in row:
+                col_idx = word["col"]
+                if columns[col_idx]:
+                    columns[col_idx] += word["text"]
+                else:
+                    columns[col_idx] = word["text"]
+            row_text = " ".join(w["text"] for w in row)
+            structured_rows.append({
+                "text": row_text,
+                "words": row,
+                "columns": columns,
+            })
+
+        return structured_rows
 
     def _extract_invoice(self, pdf) -> Invoice:
         """从 PDF 中提取发票信息"""
@@ -278,7 +403,10 @@ class PdfInvoiceParser(BaseInvoiceParser):
 
         # 若文本过少（图片型 PDF），尝试 OCR 兜底
         if len(all_text.strip()) < 20:
-            all_text = self._ocr_pdf(pdf)
+            ocr_text, ocr_structured = self._ocr_pdf(pdf)
+            all_text = ocr_text
+        else:
+            ocr_structured = []
 
         inv = Invoice(source_format="PDF")
 
@@ -317,9 +445,12 @@ class PdfInvoiceParser(BaseInvoiceParser):
         # 从表格中提取明细行
         inv.lines = self._extract_lines_from_tables(all_tables, all_text)
 
-        # 若表格解析未得到明细行，尝试从全文正则提取
+        # 若表格解析未得到明细行，优先使用 OCR 结构化输出，否则从全文正则提取
         if not inv.lines:
-            inv.lines = self._extract_lines_from_text(all_text)
+            if ocr_structured:
+                inv.lines = self._extract_lines_from_ocr_structured(ocr_structured)
+            if not inv.lines:
+                inv.lines = self._extract_lines_from_text(all_text)
 
         # 计算总金额
         if inv.lines:
@@ -527,6 +658,76 @@ class PdfInvoiceParser(BaseInvoiceParser):
                 ))
 
         return lines
+
+    def _extract_lines_from_ocr_structured(self, structured_rows: list) -> List[InvoiceLineItem]:
+        """从 _structure_postprocess 输出的结构化行列表中提取发票明细行。
+
+        利用列对齐信息，将数值列（金额/数量/税额）与名称列区分，
+        减少数量/金额/税额串位的概率。
+        """
+        import re
+
+        _re_name_prefix = re.compile(r'\*[^*]+\*')  # *类别*名称 格式
+        _re_numeric_col = re.compile(r'^[¥￥]?\d[\d,，.]*$')  # 数值列（含货币符号）
+        _re_tax_rate = re.compile(r'\d+(?:\.\d+)?%')
+
+        items: List[InvoiceLineItem] = []
+        for row in structured_rows:
+            columns = row.get("columns", [])
+            if not columns:
+                continue
+            # 找到名称列（第一个含汉字且匹配 *cat*name 格式的列）
+            name_col_idx = None
+            name_val = ""
+            for i, col in enumerate(columns):
+                if _re_name_prefix.search(col):
+                    name_col_idx = i
+                    name_val = col.strip()
+                    break
+
+            if name_col_idx is None or not name_val:
+                continue
+
+            # 收集右侧各数值列
+            numeric_vals = []
+            for col in columns[name_col_idx + 1:]:
+                col = col.strip()
+                if not col:
+                    continue
+                if _re_tax_rate.search(col):
+                    continue  # 跳过税率列
+                v = self._parse_number(col)
+                if v is not None:
+                    numeric_vals.append(v)
+
+            if not numeric_vals:
+                continue
+
+            # 中国发票列顺序：数量, 单价, 金额（不含税）, 税额
+            # 取倒数第二个数值作为金额（若有4个以上），否则取最后一个
+            if len(numeric_vals) >= 4:
+                quantity = numeric_vals[0] or None
+                unit_price = numeric_vals[-3] or None
+                amount = numeric_vals[-2]
+            elif len(numeric_vals) >= 2:
+                quantity = None
+                unit_price = None
+                amount = numeric_vals[-2]
+            else:
+                quantity = None
+                unit_price = None
+                amount = numeric_vals[0]
+
+            if amount and amount > 0:
+                items.append(InvoiceLineItem(
+                    name=name_val,
+                    tax_classification_name=name_val,
+                    quantity=quantity if quantity and quantity > 0 else None,
+                    unit_price=unit_price if unit_price and unit_price > 0 else None,
+                    amount=amount,
+                ))
+
+        return items
 
     def _extract_from_ocr_blocks(self, raw_lines: list) -> List[InvoiceLineItem]:
         """Block-based multi-line OCR merging for scanned/image PDFs.

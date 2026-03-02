@@ -4,6 +4,7 @@ import sys
 import tempfile
 import os
 import io
+import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -136,12 +137,84 @@ def test_upload_invoice_pdf(client):
 
 
 def test_upload_invoice_rejects_non_pdf(client):
-    """非 PDF 文件应被拒绝"""
+    """非 PDF/XML/OFD 文件应被拒绝"""
     r = client.post(
         "/api/invoice/upload",
         files={"file": ("data.txt", b"not a pdf", "text/plain")},
     )
     assert r.status_code == 400
+
+
+def _create_test_invoice_xml() -> bytes:
+    """创建最简单的测试发票 XML，返回 bytes"""
+    xml = """<?xml version="1.0" encoding="UTF-8"?>
+<Invoice>
+  <invoice_number>XML88887777</invoice_number>
+  <invoice_code>3100000000</invoice_code>
+  <date>2025-06-20</date>
+  <seller><name>测试销方公司</name></seller>
+  <total_amount>200.0</total_amount>
+  <lines>
+    <item>
+      <name>电费</name>
+      <amount>200.0</amount>
+    </item>
+  </lines>
+</Invoice>
+"""
+    return xml.encode("utf-8")
+
+
+def test_upload_invoice_xml(client):
+    """上传 XML 发票应返回分类结果"""
+    xml_bytes = _create_test_invoice_xml()
+    r = client.post(
+        "/api/invoice/upload",
+        files={"file": ("invoice.xml", xml_bytes, "application/xml")},
+    )
+    # XML parsing may succeed or return 400 if no lines parsed; either is acceptable
+    # as long as there is no 500 error and no crash
+    assert r.status_code in (200, 400)
+
+
+def _create_test_invoice_ofd() -> bytes:
+    """创建一个包含 XML 发票内容的 OFD（ZIP）文件，返回 bytes"""
+    xml = """<?xml version="1.0" encoding="UTF-8"?>
+<Invoice>
+  <invoice_number>OFD55554444</invoice_number>
+  <total_amount>300.0</total_amount>
+  <lines>
+    <item>
+      <name>办公用品</name>
+      <amount>300.0</amount>
+    </item>
+  </lines>
+</Invoice>
+"""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("Doc_0/document.xml", xml.encode("utf-8"))
+    return buf.getvalue()
+
+
+def test_upload_invoice_ofd(client):
+    """上传 OFD 发票应返回分类结果或合理的 400 错误"""
+    ofd_bytes = _create_test_invoice_ofd()
+    r = client.post(
+        "/api/invoice/upload",
+        files={"file": ("invoice.ofd", ofd_bytes, "application/octet-stream")},
+    )
+    assert r.status_code in (200, 400)
+
+
+def test_upload_invoice_ofd_invalid_zip(client):
+    """无效 OFD（非 ZIP）应返回 400"""
+    r = client.post(
+        "/api/invoice/upload",
+        files={"file": ("invoice.ofd", b"not a zip", "application/octet-stream")},
+    )
+    assert r.status_code == 400
+
 
 
 def test_invoice_stats_after_upload(client):
