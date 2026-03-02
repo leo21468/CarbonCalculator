@@ -319,7 +319,7 @@
       e.preventDefault();
       const fileInput = $('invoiceFile');
       if (!fileInput.files || !fileInput.files.length) {
-        invoiceResult.innerHTML = '<p class="error-msg">请选择 PDF 发票文件</p>';
+        invoiceResult.innerHTML = '<p class="error-msg">请选择发票文件（PDF / XML / OFD）</p>';
         return;
       }
       const fd = new FormData();

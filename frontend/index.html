@@ -41,18 +41,18 @@
     <div class="panel" id="panel-invoice">
       <div class="card">
         <div class="tabs" style="margin-bottom:1rem;">
-          <button type="button" class="active" data-invoice-mode="file">PDF 上传</button>
+          <button type="button" class="active" data-invoice-mode="file">发票上传</button>
           <button type="button" data-invoice-mode="json">JSON 提交</button>
         </div>
 
         <div id="invoiceFileSection">
           <form class="add-form" id="invoiceForm" enctype="multipart/form-data">
             <div class="row">
-              <label>选择 PDF 发票文件 *</label>
-              <input type="file" id="invoiceFile" accept=".pdf" style="padding:0.6rem;cursor:pointer;">
+              <label>选择发票文件（PDF / XML / OFD）*</label>
+              <input type="file" id="invoiceFile" accept=".pdf,.xml,.ofd" style="padding:0.6rem;cursor:pointer;">
             </div>
             <p style="color:var(--muted);font-size:0.8rem;margin:0 0 1rem;">
-              支持中国增值税电子发票 PDF，系统将自动提取明细行并分类至 Scope 1/2/3
+              支持中国增值税电子发票 PDF、XML 及 OFD 格式，系统将自动提取明细行并分类至 Scope 1/2/3
             </p>
             <button type="submit" id="btnUpload">上传并分类</button>
           </form>

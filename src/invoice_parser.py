@@ -589,8 +589,10 @@ class PdfInvoiceParser(BaseInvoiceParser):
         i = 0
         while i < len(raw_lines):
             line = raw_lines[i]
-            if line.strip().startswith("*") and not re.search(r"\d", line):
-                next_line = raw_lines[i + 1] if i + 1 < len(raw_lines) else ""
+            next_line = raw_lines[i + 1] if i + 1 < len(raw_lines) else ""
+            # 只有当前行是纯名称行（*开头无数字）且下一行不是另一个*开头名称行时才合并
+            if (line.strip().startswith("*") and not re.search(r"\d", line)
+                    and not next_line.strip().startswith("*")):
                 merged_lines.append(line.rstrip() + next_line.lstrip())
                 i += 2
             else:
@@ -769,8 +771,11 @@ class PdfInvoiceParser(BaseInvoiceParser):
                 return False
             if re.search(r'[¥￥%]', s):
                 return False
-            # No standalone number (whitespace followed by digit)
-            if re.search(r'\s+\d', s):
+            # 含有独立数字（空白或行首后的数字）则认为不是纯名称行
+            if re.search(r'(?:^|\s)\d+(?:\.\d+)?(?:\s|$)', s):
+                return False
+            # 含有两个以上数字序列也判为非纯名称行（行中混有金额/数量）
+            if len(re.findall(r'\d+(?:\.\d+)?', s)) >= 2:
                 return False
             return True
 
@@ -797,6 +802,9 @@ class PdfInvoiceParser(BaseInvoiceParser):
                     if not nxt:
                         j += 1
                         continue
+                    # 任何以 *cat* 开头的行都视为新商品块的起点，终止当前块
+                    if re.match(r'\*[^*]+\*', nxt):
+                        break
                     # New item block starts → end current block
                     if is_name_only_line(raw_lines[j]):
                         break
