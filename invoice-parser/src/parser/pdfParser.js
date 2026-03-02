@@ -1,7 +1,10 @@
 /**
  * PDF 发票解析器
- * 使用 pdf-parse 提取文本，若为扫描件则可用 Tesseract.js 做 OCR（可选）
+ * 使用 pdf-parse 提取文本；扫描件时使用 Tesseract.js 做 OCR
  * 通过正则提取：发票号码、开票日期、销方/购方、明细及 19 位税收分类编码
+ *
+ * 依赖（扫描件 OCR 需要）：
+ *   npm install tesseract.js pdf2pic
  */
 
 const fs = require('fs');
@@ -67,6 +70,8 @@ function extractByRegex(text) {
 
 /**
  * 从表格/多行文本中尝试解析明细行（名称、税收分类编码、金额、数量、单位、单价）
+ * 中国增值税发票列顺序：名称、规格型号、单位、数量、单价、金额（不含税）、税率、税额
+ * 碳排放核算使用不含税金额（倒数第二列），不使用税额（最后一列）
  * @param {string} text
  * @returns {{ items: Array<{name, taxCode, amount, quantity, unit, price}>, totalAmount: number }}
  */
@@ -77,31 +82,23 @@ function extractItemsFromText(text) {
 
   // 表头关键词
   const nameKeywords = ['货物或应税劳务名称', '项目名称', '名称', '劳务'];
-  const taxCodeKeywords = ['税收分类编码', '编码', 'spbm', 'SSBM'];
-  const amountKeywords = ['金额', 'je', 'JE'];
-  const qtyKeywords = ['数量', 'sl', 'SL'];
-  const unitKeywords = ['单位', 'dw', 'DW'];
-  const priceKeywords = ['单价', 'dj', 'DJ'];
 
   let totalAmount = 0;
   let headerLineIdx = -1;
   for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    if (nameKeywords.some((k) => line.includes(k))) {
+    if (nameKeywords.some((k) => lines[i].includes(k))) {
       headerLineIdx = i;
       break;
     }
   }
 
   if (headerLineIdx >= 0) {
-    // Merge cross-line item names: a line starting with '*' but not ending with a digit may be
-    // continued on the next line (e.g. "*研发和技术服务*技术服" + "务费 1 157.43")
+    // 合并跨行明细名称：以 '*' 开头且不含数字的行视为名称续行
     const mergedLines = [];
     let i = headerLineIdx + 1;
     while (i < lines.length) {
       const line = lines[i];
       if (line.startsWith('*') && !/\d/.test(line)) {
-        // Looks like an incomplete item name line — merge with next
         const next = lines[i + 1] || '';
         mergedLines.push(line + next);
         i += 2;
@@ -113,11 +110,17 @@ function extractItemsFromText(text) {
 
     for (const line of mergedLines) {
       if (/合计|价税合计|小计/.test(line)) break;
-      const numParts = line.match(/[\d.]+/g) || [];
+      // 先移除税率列（如 "13%"、"9%"），避免税率数字被误认为金额
+      const lineNoRate = line.replace(/\d+(?:\.\d+)?%/g, '');
+      const numParts = lineNoRate.match(/[\d.]+/g) || [];
       const codeMatch = line.match(/\d{19}/);
       const taxCode = codeMatch ? codeMatch[0] : (taxCodes[items.length] || undefined);
-      const amount = numParts.length ? parseFloat(numParts[numParts.length - 1].replace(/,|，/g, '')) : 0;
-      const namePart = line.replace(/\d{19}/g, '').replace(/[\d.]+/g, '').trim();
+      // 中国增值税发票列顺序：数量、单价、金额（不含税）、税额
+      // 取倒数第二个数字为不含税金额，与 Python 端 _extract_lines_from_text 逻辑一致
+      // 只有一个数字时，该数字即为金额（index 0）
+      const amountIdx = numParts.length >= 2 ? numParts.length - 2 : 0;
+      const amount = numParts.length ? parseFloat(numParts[amountIdx].replace(/,|，/g, '')) : 0;
+      const namePart = line.replace(/\d{19}/g, '').replace(/[\d.]+%?/g, '').trim();
       const name = namePart || '';
       if (!name && !taxCode && amount === 0) continue;
       items.push({
@@ -140,7 +143,44 @@ function extractItemsFromText(text) {
 }
 
 /**
- * 解析 PDF 文件：先 pdf-parse 取文本，不足时可用 Tesseract.js OCR（此处仅占位，可按需接入）
+ * 使用 Tesseract.js 对 PDF 首页图片做 OCR（扫描件兜底）
+ * 需要：npm install tesseract.js pdf2pic
+ * @param {string} filePath
+ * @returns {Promise<string>} OCR 文本
+ */
+async function ocrPdfWithTesseract(filePath) {
+  let pdf2pic, Tesseract;
+  try {
+    pdf2pic = require('pdf2pic');
+    Tesseract = require('tesseract.js');
+  } catch (e) {
+    throw new Error('扫描件 OCR 需安装依赖: npm install tesseract.js pdf2pic');
+  }
+
+  const convert = pdf2pic.fromPath(filePath, {
+    density: 150,
+    saveFilename: '_invoice_ocr_tmp',
+    savePath: require('os').tmpdir(),
+    format: 'png',
+    width: 1654,
+    height: 2339,
+  });
+
+  const page = await convert(1, { responseType: 'image' });
+  const imgPath = page.path;
+
+  try {
+    const { data } = await Tesseract.recognize(imgPath, 'chi_sim+eng', {
+      logger: () => {},
+    });
+    return data.text || '';
+  } finally {
+    try { fs.unlinkSync(imgPath); } catch (_) {}
+  }
+}
+
+/**
+ * 解析 PDF 文件：pdf-parse 取文本，扫描件时用 Tesseract.js OCR
  * @param {string} filePath - PDF 文件路径
  * @param {Object} [options] - { useOcr: boolean } 是否在文本过少时启用 OCR
  * @returns {Promise<Invoice>}
@@ -158,15 +198,12 @@ async function parsePdfFile(filePath, options = {}) {
   const pdfData = await pdfParse(dataBuffer);
   let text = (pdfData && pdfData.text) || '';
 
-  // 若文本过少且启用 OCR，可用 tesseract.js 对首页渲染图做 OCR（需配合 pdf-to-img 等）
-  if (text.length < 50 && options.useOcr) {
+  // 文本过少（扫描件）且启用 OCR 时，使用 Tesseract.js
+  if (text.trim().length < 50 && options.useOcr !== false) {
     try {
-      const Tesseract = require('tesseract.js');
-      const { createCanvas } = require('canvas');
-      // 此处简化：仅当 pdf-parse 无文本时记录日志，实际可接 pdf2pic 等生成图片再 OCR
-      console.warn('[pdfParser] 文本过少，建议使用带 OCR 的流程或 paddle-ocr-node 处理扫描件');
+      text = await ocrPdfWithTesseract(fullPath);
     } catch (ocrErr) {
-      console.warn('[pdfParser] OCR 未配置:', ocrErr.message);
+      console.warn('[pdfParser] OCR 失败，将使用空文本继续:', ocrErr.message);
     }
   }
 
@@ -189,4 +226,4 @@ async function parsePdfFile(filePath, options = {}) {
   return invoice;
 }
 
-module.exports = { parsePdfFile, extractByRegex, extractItemsFromText, extractTaxCodes };
+module.exports = { parsePdfFile, extractByRegex, extractItemsFromText, extractTaxCodes, ocrPdfWithTesseract };
