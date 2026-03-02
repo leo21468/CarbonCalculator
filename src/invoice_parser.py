@@ -237,7 +237,7 @@ class PdfInvoiceParser(BaseInvoiceParser):
         finally:
             pdf.close()
 
-    def _ocr_pdf(self, pdf) -> tuple:
+    def _ocr_pdf(self, pdf) -> tuple[str, list]:
         """使用 PaddleOCR 对 PDF 各页图片进行 OCR，返回 (拼接文本, 结构化页列表) 元组"""
         try:
             from paddleocr import PaddleOCR
