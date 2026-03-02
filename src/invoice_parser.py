@@ -692,20 +692,8 @@ class PdfInvoiceParser(BaseInvoiceParser):
 
         ocr_structured = []
         if len(all_text.strip()) < 20:
-            import os
-            use_ppstructure = os.environ.get("USE_PPSTRUCTURE", "1").strip() not in ("0", "false", "False", "no")
-            if use_ppstructure:
-                try:
-                    pp_tables, pp_text, pp_structured = self._ocr_pdf_ppstructure(pdf)
-                    all_text = pp_text
-                    ocr_structured = pp_structured
-                    if pp_tables:
-                        all_tables = pp_tables
-                except Exception:
-                    pass
-            if not all_tables and not ocr_structured:
-                ocr_text, ocr_structured = self._ocr_pdf(pdf)
-                all_text = ocr_text
+            ocr_text, ocr_structured = self._ocr_pdf(pdf)
+            all_text = ocr_text
 
         inv = Invoice(source_format="PDF")
 
@@ -750,6 +738,31 @@ class PdfInvoiceParser(BaseInvoiceParser):
                 inv.lines = self._extract_lines_from_ocr_structured(ocr_structured)
             if not inv.lines:
                 inv.lines = self._extract_lines_from_text(all_text)
+            # 若仍无明细且曾走 OCR 路径，尝试 PP-Structure 兜底
+            if not inv.lines and ocr_structured:
+                try:
+                    pp_tables, pp_text, _ = self._ocr_pdf_ppstructure(pdf)
+                    if pp_tables:
+                        inv.lines = self._extract_lines_from_tables(pp_tables, pp_text)
+                    if not inv.lines and pp_text.strip():
+                        inv.lines = self._extract_lines_from_text(pp_text)
+                except Exception:
+                    pass
+            # 若仍无明细，尝试 VI-LayoutXLM KIE（需配置 PADDLEOCR_ROOT + USE_KIE=1）
+            if not inv.lines and ocr_structured:
+                try:
+                    from .kie_extractor import try_kie_extract
+                    import tempfile
+                    import os
+                    tmp_path = None
+                    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+                        tmp_path = tmp.name
+                        pdf.pages[0].to_image(resolution=150).original.save(tmp_path)
+                        inv.lines = try_kie_extract(tmp_path)
+                    if tmp_path and os.path.exists(tmp_path):
+                        os.unlink(tmp_path)
+                except Exception:
+                    pass
 
         # 计算总金额
         if inv.lines:
