@@ -383,6 +383,18 @@ class PdfInvoiceParser(BaseInvoiceParser):
     def supported_formats(self) -> List[str]:
         return ["PDF"]
 
+    @staticmethod
+    def clear_ocr_cache():
+        """清空 OCR 引擎实例缓存，强制下次调用时重新初始化。
+
+        适用场景：
+        - 切换 GPU/CPU 模式后需要重新初始化
+        - 内存占用过高需要释放模型
+        - 单元测试之间需要隔离状态
+        """
+        PdfInvoiceParser._ocr_instance = None
+        PdfInvoiceParser._ppstructure_instance = None
+
     def parse(self, source: Union[str, Path, bytes]) -> Invoice:
         import io
         try:
@@ -691,9 +703,24 @@ class PdfInvoiceParser(BaseInvoiceParser):
             all_tables.extend(tables)
 
         ocr_structured = []
+        pp_tables: List[list] = []
+        pp_text = ""
+
         if len(all_text.strip()) < 20:
-            ocr_text, ocr_structured = self._ocr_pdf(pdf)
-            all_text = ocr_text
+            # 优先使用 PP-Structure（版面分析+表格识别，精度更高）
+            try:
+                pp_tables, pp_text, ocr_structured = self._ocr_pdf_ppstructure(pdf)
+                if pp_text.strip():
+                    all_text = pp_text
+                if pp_tables:
+                    all_tables = pp_tables
+            except Exception:
+                # PP-Structure 不可用时降级到 PaddleOCR
+                try:
+                    ocr_text, ocr_structured = self._ocr_pdf(pdf)
+                    all_text = ocr_text
+                except Exception:
+                    pass
 
         inv = Invoice(source_format="PDF")
 
@@ -729,25 +756,15 @@ class PdfInvoiceParser(BaseInvoiceParser):
         if buyer_name:
             inv.buyer = SellerInfo(name=buyer_name.strip())
 
-        # 从表格中提取明细行
+        # 从表格中提取明细行（优先）
         inv.lines = self._extract_lines_from_tables(all_tables, all_text)
 
-        # 若表格解析未得到明细行，优先使用 OCR 结构化输出，否则从全文正则提取
+        # 若表格解析未得到明细行，使用 OCR 结构化输出
         if not inv.lines:
             if ocr_structured:
                 inv.lines = self._extract_lines_from_ocr_structured(ocr_structured)
             if not inv.lines:
                 inv.lines = self._extract_lines_from_text(all_text)
-            # 若仍无明细且曾走 OCR 路径，尝试 PP-Structure 兜底
-            if not inv.lines and ocr_structured:
-                try:
-                    pp_tables, pp_text, _ = self._ocr_pdf_ppstructure(pdf)
-                    if pp_tables:
-                        inv.lines = self._extract_lines_from_tables(pp_tables, pp_text)
-                    if not inv.lines and pp_text.strip():
-                        inv.lines = self._extract_lines_from_text(pp_text)
-                except Exception:
-                    pass
             # 若仍无明细，尝试 VI-LayoutXLM KIE（需配置 PADDLEOCR_ROOT + USE_KIE=1）
             if not inv.lines and ocr_structured:
                 try:
@@ -908,10 +925,6 @@ class PdfInvoiceParser(BaseInvoiceParser):
                 merged_lines.append(line)
                 i += 1
         processed_text = "\n".join(merged_lines)
-
-        with open("dump_merged_lines.txt", "w", encoding="utf-8") as f:
-            for idx, ln in enumerate(merged_lines):
-                f.write(f"[{idx}] {ln}\n")
 
         # Pattern 1: *类别*名称 或 **类别**名称 + numbers
         pattern = re.compile(
