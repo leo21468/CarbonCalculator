@@ -61,7 +61,7 @@ function parseItemsFromXml(root) {
   let totalAmount = 0;
   const taxCodes = findTaxCodes(root);
 
-  // 常见 XML 路径：FPDetail / FPMX / Item / Goods / 等
+  // 常见 XML 路径：FPDetail / FPMX / Item / Goods / COMMON_FPKJ_XMXXS 等
   const listPaths = [
     root.FPDetail,
     root.FPMX,
@@ -72,11 +72,18 @@ function parseItemsFromXml(root) {
     root.items,
     root.Goods,
     root.goods,
+    root.REQUEST && root.REQUEST.BODY && root.REQUEST.BODY.COMMON_FPKJ_XMXXS,
+    root.BODY && root.BODY.COMMON_FPKJ_XMXXS,
+    root.COMMON_FPKJ_XMXXS,
   ].filter(Boolean);
 
   let list = null;
   for (const p of listPaths) {
-    const arr = Array.isArray(p) ? p : p?.Item ? (Array.isArray(p.Item) ? p.Item : [p.Item]) : p?.Row ? (Array.isArray(p.Row) ? p.Row : [p.Row]) : null;
+    const arr = Array.isArray(p) ? p
+      : p?.Item ? (Array.isArray(p.Item) ? p.Item : [p.Item])
+      : p?.Row ? (Array.isArray(p.Row) ? p.Row : [p.Row])
+      : p?.COMMON_FPKJ_XMXX ? (Array.isArray(p.COMMON_FPKJ_XMXX) ? p.COMMON_FPKJ_XMXX : [p.COMMON_FPKJ_XMXX])
+      : null;
     if (arr && arr.length) {
       list = arr;
       break;
@@ -85,7 +92,7 @@ function parseItemsFromXml(root) {
 
   if (list && list.length) {
     list.forEach((row, idx) => {
-      const name = getString(row, ['name', 'Name', 'hwmc', 'HWMC', 'goodsName', 'spmc', 'SPMC', '项目名称']) || getString(row, ['xmmc', 'XMMC']);
+      const name = getString(row, ['name', 'Name', 'hwmc', 'HWMC', 'goodsName', 'spmc', 'SPMC', '项目名称', 'XMMC', 'xmmc']) || getString(row, ['xmmc', 'XMMC']);
       let taxCode = getString(row, ['taxCode', 'TaxCode', 'spbm', 'SPBM', 'ssbm', 'ssflbm', '税收分类编码']);
       if (!taxCode && row.taxCode != null) {
         const raw = row.taxCode;
@@ -93,10 +100,10 @@ function parseItemsFromXml(root) {
       }
       if (!taxCode && taxCodes[idx]) taxCode = taxCodes[idx];
       if (taxCode && !/^\d{19}$/.test(taxCode)) taxCode = taxCode.replace(/\D/g, '').length === 19 ? taxCode.replace(/\D/g, '') : null;
-      const amount = parseFloat(getString(row, ['amount', 'Amount', 'je', 'JE', '金额']) || 0) || 0;
-      const quantity = getString(row, ['quantity', 'Quantity', 'sl', 'SL', '数量']) || null;
+      const amount = parseFloat(getString(row, ['amount', 'Amount', 'je', 'JE', '金额', 'XMJE', 'xmje']) || 0) || 0;
+      const quantity = getString(row, ['quantity', 'Quantity', 'sl', 'SL', '数量', 'XMSL', 'xmsl']) || null;
       const unit = getString(row, ['unit', 'Unit', 'dw', 'DW', '单位']) || null;
-      const price = parseFloat(getString(row, ['price', 'Price', 'dj', 'DJ', '单价']) || 0) || 0;
+      const price = parseFloat(getString(row, ['price', 'Price', 'dj', 'DJ', '单价', 'XMDJ', 'xmdj']) || 0) || 0;
       items.push({ name: name || '', taxCode: taxCode && taxCode.length === 19 ? taxCode : undefined, amount, quantity, unit, price });
       totalAmount += amount;
     });

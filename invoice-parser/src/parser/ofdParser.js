@@ -78,7 +78,7 @@ async function parseOfdFile(filePath) {
       continue;
     }
     const data = root && typeof root === 'object' ? (root.Invoice || root.invoice || root.Document || root.document || root) : {};
-    const flat = data['ofd:Document'] || data['Document'] || data;
+    const flat = data['ofd:Document'] || data['Document'] || data['Body'] || data['BODY'] || data;
 
     invoiceNumber = invoiceNumber || getString(flat, ['invoiceNumber', 'fpdm', 'FPDM', '发票号码']);
     invoiceDate = invoiceDate || getString(flat, ['invoiceDate', 'kprq', 'KPRQ', '开票日期']);
@@ -89,16 +89,18 @@ async function parseOfdFile(filePath) {
 
     allTaxCodes.push(...findTaxCodes(flat));
 
-    const list = flat.FPDetail || flat.fpDetail || flat.Detail || flat.Items || flat.items || [];
-    const arr = Array.isArray(list) ? list : list.Item ? (Array.isArray(list.Item) ? list.Item : [list.Item]) : list.Row ? (Array.isArray(list.Row) ? list.Row : [list.Row]) : [];
+    const list = flat.FPDetail || flat.fpDetail || flat.Detail || flat.Items || flat.items ||
+      (flat.COMMON_FPKJ_XMXXS && flat.COMMON_FPKJ_XMXXS.COMMON_FPKJ_XMXX) ||
+      flat.COMMON_FPKJ_XMXX || [];
+    const arr = Array.isArray(list) ? list : list.Item ? (Array.isArray(list.Item) ? list.Item : [list.Item]) : list.Row ? (Array.isArray(list.Row) ? list.Row : [list.Row]) : list.COMMON_FPKJ_XMXX ? (Array.isArray(list.COMMON_FPKJ_XMXX) ? list.COMMON_FPKJ_XMXX : [list.COMMON_FPKJ_XMXX]) : [];
     if (arr.length && items.length === 0) {
       arr.forEach((row, idx) => {
-        const name = getString(row, ['name', 'hwmc', 'goodsName', '项目名称']) || '';
+        const name = getString(row, ['name', 'hwmc', 'goodsName', '项目名称', 'XMMC', 'xmmc']) || '';
         const taxCode = getString(row, ['taxCode', 'spbm', '税收分类编码']) || allTaxCodes[idx] || undefined;
-        const amount = parseFloat(getString(row, ['amount', 'je', '金额']) || 0) || 0;
-        const quantity = getString(row, ['quantity', 'sl', '数量']) || null;
+        const amount = parseFloat(getString(row, ['amount', 'je', '金额', 'XMJE', 'xmje']) || 0) || 0;
+        const quantity = getString(row, ['quantity', 'sl', '数量', 'XMSL', 'xmsl']) || null;
         const unit = getString(row, ['unit', 'dw', '单位']) || null;
-        const price = parseFloat(getString(row, ['price', 'dj', '单价']) || 0) || 0;
+        const price = parseFloat(getString(row, ['price', 'dj', '单价', 'XMDJ', 'xmdj']) || 0) || 0;
         items.push({ name, taxCode, amount, quantity, unit, price });
         totalAmount += amount;
       });
