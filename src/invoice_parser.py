@@ -2,13 +2,93 @@
 第一步：数据采集 - 发票结构化提取。
 系统通过接口提取电子发票（OFD/PDF/XML）的结构化数据。
 核心抓取字段：货物或应税劳务名称、税收分类编码、金额/单价/数量、销方信息。
+
+碳排放计算输入字段说明
+-----------------------
+碳排放核算**始终使用"金额"（amount）字段**作为 EEIO 支出法的输入：
+    碳排放量(kgCO2e) = 金额(CNY) × 碳排放强度(kgCO2e/元)
+
+金额字段解析支持以下常见格式（由 ``parse_amount_cny`` 处理）：
+    "¥1,234.56"  → 1234.56
+    "￥1,234.56" → 1234.56
+    "RMB 5000"   → 5000.0
+    "1,234.56元" → 1234.56
+    "1 234,56"   → 1234.56（欧式千位空格+逗号小数点）
+
+**不应**使用税率（税率字段，如"13%"、"9%"）作为金额来源。
 """
 from __future__ import annotations
+import re
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import List, Union
+from typing import List, Optional, Union
+
+# 预编译常用正则，提升性能（在 parse_amount_cny、_parse_number 及文本解析中复用）
+_RE_PERCENT = re.compile(r'\d+(?:\.\d+)?%')   # 税率百分比（如"13%"）
+_RE_CURRENCY = re.compile(r'[¥￥]')            # 人民币货币符号
+_RE_RMBORЦNY = re.compile(r'\b(RMB|CNY)\b', re.IGNORECASE)  # 货币名称缩写
+_RE_TAX_RATE_COL = re.compile(r'\d+(?:\.\d+)?%')  # 发票行中的税率列值
 
 from .models import Invoice, InvoiceLineItem, SellerInfo
+
+
+def parse_amount_cny(val: str) -> Optional[float]:
+    """解析带货币符号的金额字符串为人民币浮点数（CNY）。
+
+    碳排放计算使用此函数将发票/收据中的金额字段统一转为 float，
+    **不接受税率（如"13%"）作为金额**。
+
+    支持格式：
+        - "¥1,234.56" / "￥1,234.56"    → 1234.56
+        - "RMB 1,234.56" / "CNY 5000"   → 1234.56 / 5000.0
+        - "1,234.56元" / "1234元"        → 1234.56 / 1234.0
+        - "1 234,56"（欧式：空格千位+逗号小数）→ 1234.56
+        - "1,234,567.89"（标准千位分隔）  → 1234567.89
+        - 负数、超大金额均正常解析
+
+    遇到无法解析的格式（如纯百分比"13%"）返回 None，调用方应
+    降级到其他字段或记录日志，不得使用税率作为金额替代。
+
+    Args:
+        val: 待解析的金额字符串。
+
+    Returns:
+        解析后的浮点数（元），无法解析时返回 None。
+    """
+    if not val:
+        return None
+    s = str(val).strip()
+    # 拒绝百分比值（税率如"13%"、"9%"），碳排放计算不使用税率字段
+    if _RE_PERCENT.search(s):
+        return None
+    # 去除货币符号与中文单位前缀/后缀
+    s = _RE_CURRENCY.sub('', s)
+    s = _RE_RMBORЦNY.sub('', s)
+    s = re.sub(r'元\s*$', '', s)
+    s = s.strip()
+    # 全角字符规范化
+    s = s.replace('，', ',').replace('。', '.').replace('　', ' ')
+    # 同时含逗号和点：按标准格式（逗号=千位符，点=小数点）处理
+    if ',' in s and '.' in s:
+        s = s.replace(',', '')
+    elif ',' in s:
+        # 仅有逗号：若逗号后恰好跟3位数字则视为千位符，否则视为小数点
+        last_comma = s.rfind(',')
+        after = s[last_comma + 1:]
+        if re.fullmatch(r'\d{3}', after):
+            s = s.replace(',', '')
+        else:
+            s = s.replace(',', '.')
+    # 去掉剩余空格（欧式千位空格如"1 234"）
+    s = re.sub(r'\s', '', s)
+    # 保留数字、小数点、负号
+    s = re.sub(r'[^\d.\-]', '', s)
+    if not s:
+        return None
+    try:
+        return float(s)
+    except (ValueError, TypeError):
+        return None
 
 
 class BaseInvoiceParser(ABC):
@@ -375,7 +455,10 @@ class PdfInvoiceParser(BaseInvoiceParser):
             name_end = m.start(1) + len(m.group(1))
             eol = processed_text.find('\n', name_end)
             line_rest = processed_text[name_end: eol if eol != -1 else len(processed_text)]
-            all_nums = re.findall(r'\d+(?:\.\d+)?', line_rest)
+            # 过滤税率列：先移除形如"13%"、"9%"等百分比值，避免税率数字被误认为金额
+            # 中国增值税发票税率列（如"13%"、"9%"）不参与碳排放量化，碳计算仅使用金额字段
+            line_rest_no_rate = _RE_TAX_RATE_COL.sub('', line_rest)
+            all_nums = re.findall(r'\d+(?:\.\d+)?', line_rest_no_rate)
             if len(all_nums) >= 4:
                 # 中国增值税发票固定列顺序：数量, 单价, 金额（不含税）, 税额
                 # 倒数第二个数字为金额（不含税），最后一个为税额（忽略）
@@ -414,7 +497,9 @@ class PdfInvoiceParser(BaseInvoiceParser):
                 name_end = m.start(1) + len(m.group(1))
                 eol = processed_text.find('\n', name_end)
                 line_rest = processed_text[name_end: eol if eol != -1 else len(processed_text)]
-                all_nums = re.findall(r'\d+(?:\.\d+)?', line_rest)
+                # 过滤税率列：先移除百分比值，避免税率数字被误认为金额
+                line_rest_no_rate = _RE_TAX_RATE_COL.sub('', line_rest)
+                all_nums = re.findall(r'\d+(?:\.\d+)?', line_rest_no_rate)
                 if len(all_nums) >= 4:
                     quantity = self._parse_number(all_nums[0])
                     unit_price = self._parse_number(all_nums[-3])
@@ -465,11 +550,23 @@ class PdfInvoiceParser(BaseInvoiceParser):
 
     @staticmethod
     def _parse_number(val: str) -> Union[float, None]:
-        """安全解析数值字符串"""
+        """安全解析数值字符串，支持货币符号（¥、￥）与千位分隔符。
+
+        不解析百分比值（如"13%"），此类值为税率而非金额，
+        碳排放计算不使用税率字段。
+        """
         if not val:
             return None
-        import re
-        cleaned = re.sub(r"[,，\s]", "", str(val).strip())
+        cleaned = str(val).strip()
+        # 拒绝百分比值（税率），避免误用税率作为金额
+        if _RE_PERCENT.search(cleaned):
+            return None
+        # 去除货币符号与中文单位
+        cleaned = _RE_CURRENCY.sub('', cleaned)
+        cleaned = _RE_RMBORЦNY.sub('', cleaned)
+        cleaned = cleaned.rstrip('元').strip()
+        # 去除千位分隔符与空白
+        cleaned = re.sub(r"[,，\s]", "", cleaned)
         try:
             return float(cleaned)
         except (ValueError, TypeError):
