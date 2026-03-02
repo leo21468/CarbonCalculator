@@ -833,7 +833,41 @@ class PdfInvoiceParser(BaseInvoiceParser):
             if amount_col is None and len(header_str) >= 5:
                 amount_col = min(5, len(header_str) - 2)
 
+            # 预处理：合并名称跨行（第二行名称列为空且其他数值列也为空时，
+            # 将第一列的续行文字追加到上一行的名称列）
+            merged_rows: list = []
             for row in table[1:]:
+                if row is None:
+                    merged_rows.append(row)
+                    continue
+                row_str = [str(c).strip() if c else "" for c in row]
+                row_name = row_str[name_col] if name_col < len(row_str) else ""
+                # 判断是否为续行：名称列为空，且所有金额/数值列也为空
+                # 排除第0列（可能含续行文字）和名称列自身
+                value_cols_empty = all(
+                    not row_str[k]
+                    for k in range(len(row_str))
+                    if k != 0 and k != name_col  # col 0 is checked separately as continuation text
+                )
+                first_col_text = row_str[0] if row_str else ""
+                is_continuation = (
+                    not row_name
+                    and merged_rows
+                    and merged_rows[-1] is not None
+                    and value_cols_empty
+                    and first_col_text
+                    and not re.match(r'^[¥￥\d,，.\s%]+$', first_col_text)
+                )
+                if is_continuation:
+                    prev_row = list(merged_rows[-1])
+                    prev_name = str(prev_row[name_col]).strip() if name_col < len(prev_row) and prev_row[name_col] else ""
+                    if prev_name:
+                        prev_row[name_col] = prev_name + first_col_text
+                        merged_rows[-1] = prev_row
+                        continue
+                merged_rows.append(row)
+
+            for row in merged_rows:
                 if row is None:
                     continue
                 row_str = [str(c).strip() if c else "" for c in row]
@@ -915,12 +949,32 @@ class PdfInvoiceParser(BaseInvoiceParser):
         i = 0
         while i < len(raw_lines):
             line = raw_lines[i]
-            next_line = raw_lines[i + 1] if i + 1 < len(raw_lines) else ""
-            # 只有当前行是纯名称行（*开头无数字）且下一行不是另一个*开头名称行时才合并
-            if (line.strip().startswith("*") and not re.search(r"\d", line)
-                    and not next_line.strip().startswith("*")):
-                merged_lines.append(line.rstrip() + next_line.lstrip())
-                i += 2
+            # 当前行是 *XX*YY 格式名称行（无小数、少于2个独立整数）→ 循环向前看，支持三行以上跨行名称合并
+            is_star_name = (line.strip().startswith("*")
+                            and not re.search(r'\d+\.\d+', line)
+                            and len(re.findall(r'\b\d+\b', line)) < 2)
+            if is_star_name:
+                merged = line.rstrip()
+                j = i + 1
+                while j < len(raw_lines):
+                    nxt = raw_lines[j].strip()
+                    if not nxt:
+                        j += 1
+                        continue
+                    # 另一个 *XX*YY 格式行 → 新商品，停止合并
+                    if nxt.startswith("*"):
+                        break
+                    # 无数字且长度≤15的中文片段 → 名称续行，继续合并
+                    if not re.search(r'\d', nxt) and len(nxt) <= 15:
+                        merged = merged + nxt
+                        j += 1
+                        continue
+                    # 含数字 → 本商品数量/金额行，合并后停止
+                    merged = merged + " " + nxt
+                    j += 1
+                    break
+                merged_lines.append(merged)
+                i = j
             else:
                 merged_lines.append(line)
                 i += 1
@@ -1064,7 +1118,7 @@ class PdfInvoiceParser(BaseInvoiceParser):
                 out = []
                 subset = cols[start + 1:] if start >= 0 else cols
                 for col in subset:
-                    col = col.strip()
+                    col = _RE_TAX_RATE_COL.sub('', col.strip()).strip()
                     if not col:
                         continue
                     nums = self._parse_numbers_from_cell(col)
@@ -1158,11 +1212,10 @@ class PdfInvoiceParser(BaseInvoiceParser):
                 return False
             if re.search(r'[¥￥%]', s):
                 return False
-            # 含有独立数字（空白或行首后的数字）则认为不是纯名称行
-            if re.search(r'(?:^|\s)\d+(?:\.\d+)?(?:\s|$)', s):
-                return False
-            # 含有两个以上数字序列也判为非纯名称行（行中混有金额/数量）
-            if len(re.findall(r'\d+(?:\.\d+)?', s)) >= 2:
+            # 允许名称中含单个数字（如型号），含2个以上独立数字序列才排除
+            s_without_categories = re.sub(r'\*[^*]+\*', '', s)
+            num_sequences = re.findall(r'\b\d+(?:\.\d+)?\b', s_without_categories)
+            if len(num_sequences) >= 2:
                 return False
             return True
 
