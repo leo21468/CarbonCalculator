@@ -3,6 +3,10 @@
               /api/invoice/categories, /api/invoice/stats
 """
 from __future__ import annotations
+import io
+import os
+import tempfile
+import zipfile
 from fastapi import APIRouter, HTTPException, UploadFile, File, Body
 
 from backend.database import (
@@ -22,29 +26,78 @@ def _get_pipeline():
 
 @router.post(
     "/upload",
-    summary="上传 PDF 发票",
-    description="上传 PDF 发票文件，解析明细、分类至 Scope 1/2/3 并存入数据库，返回分类结果及排放核算摘要。",
+    summary="上传发票（支持 PDF / XML / OFD）",
+    description="上传发票文件（PDF / XML / OFD），解析明细、分类至 Scope 1/2/3 并存入数据库，返回分类结果及排放核算摘要。",
 )
 async def upload_invoice(file: UploadFile = File(...)):
-    """上传 PDF 发票文件，解析发票明细、分类并记录类别统计到数据库。"""
+    """上传发票文件（PDF / XML / OFD），解析发票明细、分类并记录类别统计到数据库。"""
     if not file.filename:
         raise HTTPException(status_code=400, detail="请上传文件")
-    if not file.filename.lower().endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="仅支持 PDF 格式的发票文件")
+
+    ext = os.path.splitext(file.filename.lower())[1]
+    if ext not in (".pdf", ".xml", ".ofd"):
+        raise HTTPException(status_code=400, detail="仅支持 PDF / XML / OFD 格式的发票文件")
 
     content = await file.read()
     if not content:
         raise HTTPException(status_code=400, detail="文件内容为空")
 
-    from src.invoice_parser import PdfInvoiceParser
-    parser = PdfInvoiceParser()
-    try:
-        invoice = parser.parse(content)
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"PDF 解析失败：{e}")
+    if ext == ".pdf":
+        from src.invoice_parser import PdfInvoiceParser
+        try:
+            invoice = PdfInvoiceParser().parse(content)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"PDF 解析失败：{e}")
+    elif ext == ".xml":
+        from src.invoice_parser import JsonXmlInvoiceParser
+        tmp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(suffix=".xml", delete=False) as tf:
+                tf.write(content)
+                tmp_path = tf.name
+            invoice = JsonXmlInvoiceParser().parse(tmp_path)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"XML 解析失败：{e}")
+        finally:
+            if tmp_path and os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+    else:  # .ofd
+        from src.invoice_parser import JsonXmlInvoiceParser
+        zf = None
+        tmp_path = None
+        try:
+            try:
+                zf = zipfile.ZipFile(io.BytesIO(content))
+            except zipfile.BadZipFile as e:
+                raise HTTPException(status_code=400, detail=f"OFD 解析失败：不是有效的 ZIP/OFD 文件（{e}）")
+
+            xml_names = [
+                n for n in zf.namelist()
+                if n.lower().endswith(".xml") and "__macosx" not in n.lower()
+            ]
+            if not xml_names:
+                raise HTTPException(status_code=400, detail="OFD 解析失败：ZIP 包中未找到 XML 文件")
+            # 优先选取常见发票描述 XML 文件名，否则取第一个
+            preferred = next(
+                (n for n in xml_names if os.path.basename(n.lower()) in ("document.xml", "invoice.xml")),
+                xml_names[0],
+            )
+            xml_data = zf.read(preferred)
+            with tempfile.NamedTemporaryFile(suffix=".xml", delete=False) as tf:
+                tf.write(xml_data)
+                tmp_path = tf.name
+            try:
+                invoice = JsonXmlInvoiceParser().parse(tmp_path)
+            except Exception as e:
+                raise HTTPException(status_code=400, detail=f"OFD 解析失败：XML 解析错误（{e}）")
+        finally:
+            if zf is not None:
+                zf.close()
+            if tmp_path and os.path.exists(tmp_path):
+                os.unlink(tmp_path)
 
     if not invoice.lines:
-        raise HTTPException(status_code=400, detail="未能从 PDF 中提取到发票明细行")
+        raise HTTPException(status_code=400, detail="未能从发票中提取到发票明细行")
 
     pipeline = _get_pipeline()
     result = pipeline.process_invoice(invoice, ref_invoice_id=invoice.invoice_number)
