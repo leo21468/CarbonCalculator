@@ -424,10 +424,16 @@ class PdfInvoiceParser(BaseInvoiceParser):
 
         lines = []
 
-        # Pre-process: merge lines where a *category*name is split across lines.
-        # A line that starts with '*' but contains no digits is likely a broken item name;
-        # merge it with the following line.
         raw_lines = text.split("\n")
+
+        # First attempt: block-based multi-line OCR merging (handles scanned PDFs where
+        # each field of an item is on its own line).  If blocks are found we return early
+        # to avoid the existing 2-line pre-processing from mangling the multi-line text
+        # (e.g. merging a name-only line with the first number, which causes the old
+        # pattern to capture the tax rate digit as the amount instead of the real amount).
+        block_items = self._extract_from_ocr_blocks(raw_lines)
+        if block_items:
+            return block_items
         merged_lines = []
         i = 0
         while i < len(raw_lines):
@@ -521,6 +527,121 @@ class PdfInvoiceParser(BaseInvoiceParser):
                 ))
 
         return lines
+
+    def _extract_from_ocr_blocks(self, raw_lines: list) -> List[InvoiceLineItem]:
+        """Block-based multi-line OCR merging for scanned/image PDFs.
+
+        When OCR splits a single invoice item across multiple lines (item name on one
+        line, numeric fields on subsequent lines, name continuation even later), this
+        method groups those lines into logical blocks and extracts InvoiceLineItem
+        objects directly.
+
+        Returns a non-empty list when multi-line blocks are detected; returns [] so
+        the caller falls back to the existing single-line pattern matching.
+        """
+        import re
+
+        def is_name_only_line(line: str) -> bool:
+            """True if line is a *cat*name line with no inline numbers/currency/percent."""
+            s = line.strip()
+            if not re.match(r'\*[^*]+\*', s):
+                return False
+            if re.search(r'[¥￥%]', s):
+                return False
+            # No standalone number (whitespace followed by digit)
+            if re.search(r'\s+\d', s):
+                return False
+            return True
+
+        bare_number_pat = re.compile(r'^\s*[\d,]+(?:\.\d+)?\s*$')
+        tax_rate_pat = re.compile(r'^\s*\d+(?:\.\d+)?%\s*$')
+        currency_pat = re.compile(r'^\s*[¥￥][\d,]+(?:\.\d+)?\s*$')
+        # Short Chinese continuation fragment: 1–6 Chinese chars, nothing else
+        cn_fragment_pat = re.compile(r'^\s*[\u4e00-\u9fff]{1,6}\s*$')
+
+        def has_reasonable_decimals(v: float) -> bool:
+            """True if v has at most 2 decimal places (monetary amount, not a ratio)."""
+            return abs(v - round(v, 2)) < 1e-9
+
+        items: List[InvoiceLineItem] = []
+        i = 0
+        while i < len(raw_lines):
+            line = raw_lines[i]
+            if is_name_only_line(line):
+                name_parts = [line.strip()]
+                plain_numbers: List[float] = []
+                j = i + 1
+                while j < len(raw_lines):
+                    nxt = raw_lines[j].strip()
+                    if not nxt:
+                        j += 1
+                        continue
+                    # New item block starts → end current block
+                    if is_name_only_line(raw_lines[j]):
+                        break
+                    # Tax rate line → skip (must not become amount)
+                    if tax_rate_pat.match(nxt):
+                        j += 1
+                        continue
+                    # Currency-prefixed amount → skip (prefer plain numbers for amount)
+                    if currency_pat.match(nxt):
+                        j += 1
+                        continue
+                    # Bare decimal number
+                    if bare_number_pat.match(nxt):
+                        v = self._parse_number(nxt)
+                        if v is not None:
+                            plain_numbers.append(v)
+                        j += 1
+                        continue
+                    # Short Chinese continuation → part of the item name
+                    if cn_fragment_pat.match(nxt):
+                        name_parts.append(nxt)
+                        j += 1
+                        continue
+                    # Anything else ends the block
+                    break
+
+                # Only emit an item when block data was actually collected
+                if len(name_parts) > 1 or plain_numbers:
+                    name = self._merge_ocr_name_parts(name_parts)
+                    # Amount = first plain number with ≤2 decimal places.
+                    # Chinese VAT invoices always list fields in the order:
+                    # quantity → unit_price → amount_excl_tax → tax_rate → tax_amount,
+                    # so OCR lines appear in that same order and the first reasonable
+                    # bare number is the pre-tax amount, not the smaller tax amount.
+                    reasonable_nums = [v for v in plain_numbers if has_reasonable_decimals(v)]
+                    amount = reasonable_nums[0] if reasonable_nums else None
+                    if name and amount is not None and amount > 0:
+                        items.append(InvoiceLineItem(
+                            name=name,
+                            tax_classification_name=name,
+                            amount=amount,
+                        ))
+
+                i = j
+            else:
+                i += 1
+
+        return items
+
+    @staticmethod
+    def _merge_ocr_name_parts(parts: list) -> str:
+        """Merge OCR name fragments, removing line-break artifacts.
+
+        When a *category*name is split across lines, the last character of the
+        first fragment is sometimes an OCR artifact (e.g. '项' replacing the true
+        last character).  Strip a trailing '项' before appending the continuation.
+        """
+        if not parts:
+            return ""
+        result = parts[0]
+        for cont in parts[1:]:
+            # '项' at the end of a split name is a common OCR line-break artifact
+            if result.endswith('项'):
+                result = result[:-1]
+            result = result.rstrip() + cont.strip()
+        return result.strip()
 
     @staticmethod
     def _find_col_index(header: List[str], keywords: tuple) -> Union[int, None]:
