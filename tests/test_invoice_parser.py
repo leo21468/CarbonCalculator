@@ -5,8 +5,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from src.invoice_parser import PdfInvoiceParser, JsonXmlInvoiceParser
-
+from src.invoice_parser import PdfInvoiceParser, JsonXmlInvoiceParser, parse_amount_cny
 
 class TestTableAmountNotUnitPrice:
     """测试表格解析时 amount 取金额列而非单价列"""
@@ -122,3 +121,121 @@ class TestJsonParserAmountField:
         assert inv.lines[0].unit_price == 0.80, (
             f"unit_price 应为 0.80，实际为 {inv.lines[0].unit_price}"
         )
+
+
+class TestOcrTaxRateNotAmount:
+    """测试 OCR 文本含税率列时，碳计算仍使用金额而非税率"""
+
+    def test_ocr_text_with_tax_rate_column_pattern1(self):
+        """OCR 文本含5列数字（数量、单价、金额、税率、税额），amount 应为金额（80.00）而非税率数值（13）"""
+        parser = PdfInvoiceParser()
+        # 中国增值税发票典型格式：货物名称 数量 单位 单价 金额（不含税）税率 税额
+        text = "*电力*电费 100 度 0.80 80.00 13% 10.40"
+        items = parser._extract_lines_from_text(text)
+        assert len(items) >= 1, "应能提取到至少1条明细"
+        assert abs(items[0].amount - 80.00) < 0.01, (
+            f"amount 应为金额列 80.00，不应为税率数值 13，实际为 {items[0].amount}"
+        )
+
+    def test_ocr_text_with_tax_rate_column_pattern2(self):
+        """非*前缀格式的 OCR 文本含税率列，amount 仍应取金额而非税率"""
+        parser = PdfInvoiceParser()
+        text = "办公用品 50 个 10.00 500.00 6% 30.00"
+        items = parser._extract_lines_from_text(text)
+        assert len(items) >= 1, "应能提取到至少1条明细"
+        assert abs(items[0].amount - 500.00) < 0.01, (
+            f"amount 应为金额列 500.00，不应为税率数值 6，实际为 {items[0].amount}"
+        )
+
+    def test_ocr_text_without_tax_rate_column(self):
+        """OCR 文本只有4列数字时（无税率列），amount 仍应正确提取"""
+        parser = PdfInvoiceParser()
+        text = "*电力*电费 100 度 0.80 80.00 10.40"
+        items = parser._extract_lines_from_text(text)
+        assert len(items) >= 1
+        assert abs(items[0].amount - 80.00) < 0.01, (
+            f"无税率列时 amount 应为 80.00，实际为 {items[0].amount}"
+        )
+
+    def test_ocr_text_amount_not_tax_rate_value(self):
+        """确保碳计算输入为金额而非税率：tax_rate=9% 不得出现在 amount 字段"""
+        parser = PdfInvoiceParser()
+        text = "*服务*技术咨询 1 次 5000.00 5000.00 9% 450.00"
+        items = parser._extract_lines_from_text(text)
+        assert len(items) >= 1
+        # 税率 9% 的数字部分为 9，金额为 5000.00
+        assert items[0].amount != 9, "amount 不应等于税率数值 9"
+        assert abs(items[0].amount - 5000.00) < 0.01, (
+            f"amount 应为金额 5000.00，实际为 {items[0].amount}"
+        )
+
+
+class TestParseAmountCny:
+    """测试 parse_amount_cny 金额解析函数"""
+
+    def test_yen_symbol(self):
+        assert abs(parse_amount_cny("¥1,234.56") - 1234.56) < 0.001
+
+    def test_fullwidth_yen(self):
+        assert abs(parse_amount_cny("￥1,234.56") - 1234.56) < 0.001
+
+    def test_rmb_prefix(self):
+        assert abs(parse_amount_cny("RMB 5000") - 5000.0) < 0.001
+
+    def test_yuan_suffix(self):
+        assert abs(parse_amount_cny("1,234.56元") - 1234.56) < 0.001
+
+    def test_no_symbol(self):
+        assert abs(parse_amount_cny("1234.56") - 1234.56) < 0.001
+
+    def test_thousands_separator(self):
+        assert abs(parse_amount_cny("1,234,567.89") - 1234567.89) < 0.01
+
+    def test_european_format(self):
+        # 欧式格式：空格千位+逗号小数
+        assert abs(parse_amount_cny("1 234,56") - 1234.56) < 0.001
+
+    def test_zero(self):
+        assert parse_amount_cny("0") == 0.0
+        assert parse_amount_cny("¥0.00") == 0.0
+
+    def test_large_amount(self):
+        assert abs(parse_amount_cny("¥9,999,999.99") - 9999999.99) < 0.01
+
+    def test_empty_returns_none(self):
+        assert parse_amount_cny("") is None
+        assert parse_amount_cny(None) is None
+
+    def test_tax_rate_not_parsed_as_amount(self):
+        """税率字符串不应被解析为有效金额，返回 None"""
+        # 税率如 "13%" 去掉货币符号后剩下 "13%" → float("13%") 失败 → 返回 None
+        result = parse_amount_cny("13%")
+        assert result is None, f"税率'13%'不应解析为金额，实际返回 {result}"
+
+    def test_negative_amount(self):
+        result = parse_amount_cny("-500.00")
+        assert result is not None
+        assert abs(result - (-500.00)) < 0.001
+
+    def test_fullwidth_comma(self):
+        assert abs(parse_amount_cny("¥1，234.56") - 1234.56) < 0.001
+
+
+class TestParseNumberCurrencySymbol:
+    """测试 _parse_number 支持货币符号"""
+
+    def test_yen_symbol_stripped(self):
+        parser = PdfInvoiceParser()
+        assert abs(parser._parse_number("¥80.00") - 80.0) < 0.001
+
+    def test_fullwidth_yen_stripped(self):
+        parser = PdfInvoiceParser()
+        assert abs(parser._parse_number("￥80.00") - 80.0) < 0.001
+
+    def test_tax_rate_rejected(self):
+        """百分比值（税率）应被拒绝，返回 None"""
+        parser = PdfInvoiceParser()
+        assert parser._parse_number("13%") is None
+        assert parser._parse_number("9%") is None
+        assert parser._parse_number("0%") is None
+

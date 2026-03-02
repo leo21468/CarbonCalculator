@@ -200,6 +200,42 @@ st = pipeline.build_statement(
 # st.carbon_adjusted_gross, st.net_carbon_pnl 等
 ```
 
+## 碳排放计算输入字段说明
+
+### 金额字段（amount）为唯一 EEIO 计算输入
+
+碳排放核算中，EEIO 支出法的输入**始终为发票金额（amount）字段**，公式为：
+
+```
+碳排放量(kgCO2e) = 金额(CNY元) × 碳排放强度(kgCO2e/元)
+```
+
+**重要**：税率字段（`税率`、`tax_rate`，如 `13%`、`9%`）**不参与**碳排放量化，仅用于发票税费校验等财务场景。系统在 OCR 识别与字段映射时已明确排除税率列，防止误用。
+
+### 金额解析格式（`parse_amount_cny`）
+
+`src/invoice_parser.py` 中的 `parse_amount_cny(val)` 函数统一解析带货币符号的金额字符串：
+
+| 输入格式 | 输出 |
+|---------|------|
+| `"¥1,234.56"` | `1234.56` |
+| `"￥1,234.56"` | `1234.56` |
+| `"RMB 5000"` | `5000.0` |
+| `"1,234.56元"` | `1234.56` |
+| `"1 234,56"`（欧式） | `1234.56` |
+| `"1,234,567.89"` | `1234567.89` |
+| `"13%"`（税率） | `None`（拒绝，不作为金额） |
+| `""` / `None` | `None` |
+
+OCR 识别结果处理：若 PaddleOCR 返回的发票行文本包含税率列（如 `*电力*电费 100 度 0.80 80.00 13% 10.40`），系统会先过滤百分比值再按列序提取金额，确保 `amount = 80.00` 而非税率数值 `13`。
+
+### 字段缺失降级策略
+
+- `amount` 字段缺失或无法解析时，碳计算返回 `None` 并跳过该行（不使用税率代替）。
+- 如需排查字段来源，请检查发票 `lines[i].amount` 是否正确提取。
+
+
+
 ## 映射表与因子
 
 - **19 位税号 → Scope**：优先从 **SQLite** `data/reference_table.db` 加载（需先执行 `python scripts/import_reference_table_to_db.py`）；若无 DB 则从 `reference table.xlsx` 或 `data/scope_mapping_rules.yaml`、`data/tax_code_to_scope.csv` 回退。  
