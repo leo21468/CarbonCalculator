@@ -703,24 +703,29 @@ class PdfInvoiceParser(BaseInvoiceParser):
             all_tables.extend(tables)
 
         ocr_structured = []
-        pp_tables: List[list] = []
-        pp_text = ""
 
-        if len(all_text.strip()) < 20:
-            # 优先使用 PP-Structure（版面分析+表格识别，精度更高）
+        # 新优先级（从高到低）：
+        # 1. PaddleOCR（最高精度，始终首选）
+        # 2. PP-Structure（仅当 PaddleOCR 不可用时）
+        # 3. pdfplumber 原生文本（最低优先级/兜底，已在上方采集）
+        def _try_ppstructure():
             try:
-                pp_tables, pp_text, ocr_structured = self._ocr_pdf_ppstructure(pdf)
-                if pp_text.strip():
-                    all_text = pp_text
-                if pp_tables:
-                    all_tables = pp_tables
+                nonlocal all_text, all_tables, ocr_structured
+                pp_tables_tmp, pp_text_tmp, ocr_structured = self._ocr_pdf_ppstructure(pdf)
+                if pp_text_tmp.strip():
+                    all_text = pp_text_tmp
+                if pp_tables_tmp:
+                    all_tables = pp_tables_tmp
             except Exception:
-                # PP-Structure 不可用时降级到 PaddleOCR
-                try:
-                    ocr_text, ocr_structured = self._ocr_pdf(pdf)
-                    all_text = ocr_text
-                except Exception:
-                    pass
+                pass
+
+        try:
+            ocr_text, ocr_structured = self._ocr_pdf(pdf)
+            if ocr_text.strip():
+                all_text = ocr_text
+        except Exception:
+            # PaddleOCR 未安装（ImportError）或运行异常 → 降级到 PP-Structure
+            _try_ppstructure()
 
         inv = Invoice(source_format="PDF")
 
