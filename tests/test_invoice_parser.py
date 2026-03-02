@@ -239,3 +239,37 @@ class TestParseNumberCurrencySymbol:
         assert parser._parse_number("9%") is None
         assert parser._parse_number("0%") is None
 
+
+class TestOcrMultilineBlocks:
+    """测试 OCR 扫描版 PDF 将明细拆分为多行时能正确聚合并提取金额"""
+
+    def test_multiline_ocr_real_scenario(self):
+        """真实 OCR 拆行场景：名称、金额、税率、税额各自在独立行，且名称有续行"""
+        # OCR 行来自用户提供的 dump_merged_lines.txt（行号仅供参考，与测试行号无关）
+        ocr_lines = [
+            "*研发和技术服务*技术服项",  # 名称起始行（含行拆分伪字符'项'）
+            "157.43",                   # 不含税金额
+            "1%",                       # 税率（应被过滤）
+            "157.425742574257",         # 长小数（应被过滤为非货币金额）
+            "1.57",                     # 税额
+            "务费",                     # 名称续行
+            "￥157.43",                 # 带货币符号的金额（优先使用无前缀数字）
+            "¥1.57",                    # 带货币符号的税额
+        ]
+        text = "\n".join(ocr_lines)
+        parser = PdfInvoiceParser()
+        items = parser._extract_lines_from_text(text)
+
+        assert len(items) >= 1, "应至少解析出 1 条明细"
+
+        item = items[0]
+        assert item.name == "*研发和技术服务*技术服务费", (
+            f"名称应为 '*研发和技术服务*技术服务费'，实际为 '{item.name}'"
+        )
+        assert abs(item.amount - 157.43) < 0.01, (
+            f"amount 应为不含税金额 157.43，实际为 {item.amount}"
+        )
+        assert item.amount != 1.0, "amount 不应等于税率数值 1（来自 1%）"
+        assert abs(item.amount - 1.57) > 0.01, f"amount 不应为税额 1.57，实际为 {item.amount}"
+
+
