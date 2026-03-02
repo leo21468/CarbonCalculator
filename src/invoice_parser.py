@@ -400,6 +400,111 @@ class PdfInvoiceParser(BaseInvoiceParser):
         finally:
             pdf.close()
 
+    def _ocr_pdf_ppstructure(self, pdf) -> tuple[List[list], str, list]:
+        """使用百度 PP-Structure（版面分析+表格识别）处理图片型 PDF。
+
+        返回 (all_tables, all_text, ocr_structured)：
+        - all_tables: 每页表格的列表 [[row,...], ...]，可直接用于 _extract_lines_from_tables
+        - all_text: 拼接的全文（含 Text 区域 OCR 结果）
+        - ocr_structured: 与 _ocr_pdf 相同的页列表，供 _extract_lines_from_ocr_structured 兜底
+        """
+        try:
+            from paddleocr import PPStructure
+        except ImportError:
+            raise ImportError("PP-Structure 需要 paddleocr：pip install paddleocr")
+
+        if not hasattr(PdfInvoiceParser, '_ppstructure_instance') or PdfInvoiceParser._ppstructure_instance is None:
+            PdfInvoiceParser._ppstructure_instance = PPStructure(
+                show_log=False, table=True, layout=True, ocr=True
+            )
+        engine = PdfInvoiceParser._ppstructure_instance
+
+        import numpy as np
+        try:
+            import cv2
+        except ImportError:
+            cv2 = None
+
+        all_tables: List[list] = []
+        all_text_parts: List[str] = []
+        all_page_ocr: list = []  # 兼容 _extract_lines_from_ocr_structured 的格式
+
+        for page_idx, page in enumerate(pdf.pages):
+            img_pil = page.to_image(resolution=150).original
+            img_np = np.array(img_pil)
+            if cv2 is not None and len(img_np.shape) == 3 and img_np.shape[2] == 3:
+                img_np = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
+            try:
+                result = engine(img_np)
+            except Exception:
+                result = []
+            if not result:
+                all_text_parts.append("")
+                all_page_ocr.append({"page": page_idx + 1, "rows": [], "full_text": ""})
+                continue
+
+            page_texts = []
+            page_rows_for_ocr = []
+            for region in result:
+                rtype = region.get("type", "")
+                res = region.get("res")
+                if rtype == "table" and res and isinstance(res, dict):
+                    html = res.get("html")
+                    if html:
+                        tbl = self._parse_ppstructure_table_html(html)
+                        if tbl and len(tbl) >= 2:
+                            all_tables.append(tbl)
+                elif rtype == "text" and res:
+                    rec_res = res[1] if isinstance(res, (list, tuple)) and len(res) >= 2 else res
+                    for item in (rec_res if isinstance(rec_res, (list, tuple)) else [rec_res]):
+                        t = item[0] if isinstance(item, (list, tuple)) else str(item)
+                        page_texts.append(t)
+                        page_rows_for_ocr.append({"columns": [t], "y_center": 0})
+            text_line = " ".join(page_texts)
+            all_text_parts.append(text_line)
+            if page_rows_for_ocr:
+                all_page_ocr.append({
+                    "page": page_idx + 1,
+                    "rows": page_rows_for_ocr,
+                    "full_text": text_line,
+                })
+            else:
+                all_page_ocr.append({"page": page_idx + 1, "rows": [], "full_text": text_line})
+
+        all_text = "\n".join(all_text_parts)
+        return all_tables, all_text, all_page_ocr
+
+    def _parse_ppstructure_table_html(self, html: str) -> Optional[list]:
+        """将 PP-Structure 表格 HTML 解析为 [[cell,...], ...] 行列表"""
+        if not html or not html.strip():
+            return None
+        try:
+            import pandas as pd
+            dfs = pd.read_html(html)
+        except Exception:
+            return None
+        if not dfs:
+            return None
+        df = dfs[0]
+        rows = []
+        for _, r in df.iterrows():
+            row = []
+            for v in r.tolist():
+                if v is None or (isinstance(v, float) and (v != v or v == float("inf"))):
+                    row.append("")
+                else:
+                    row.append(str(v).strip())
+            rows.append(row)
+        if not rows:
+            header = [str(c).strip() for c in df.columns.tolist()]
+            if header:
+                rows = [header]
+        else:
+            header = [str(c).strip() for c in df.columns.tolist()]
+            if header and (not rows or [str(x) for x in rows[0]] != header):
+                rows.insert(0, header)
+        return rows if rows else None
+
     def _ocr_pdf(self, pdf) -> tuple[str, list]:
         """使用 PaddleOCR 对 PDF 各页图片进行 OCR，返回 (拼接文本, 结构化页列表) 元组"""
         try:
@@ -585,12 +690,22 @@ class PdfInvoiceParser(BaseInvoiceParser):
             tables = page.extract_tables() or []
             all_tables.extend(tables)
 
-        # 若文本过少（图片型 PDF），尝试 OCR 兜底
+        ocr_structured = []
         if len(all_text.strip()) < 20:
-            ocr_text, ocr_structured = self._ocr_pdf(pdf)
-            all_text = ocr_text
-        else:
-            ocr_structured = []
+            import os
+            use_ppstructure = os.environ.get("USE_PPSTRUCTURE", "1").strip() not in ("0", "false", "False", "no")
+            if use_ppstructure:
+                try:
+                    pp_tables, pp_text, pp_structured = self._ocr_pdf_ppstructure(pdf)
+                    all_text = pp_text
+                    ocr_structured = pp_structured
+                    if pp_tables:
+                        all_tables = pp_tables
+                except Exception:
+                    pass
+            if not all_tables and not ocr_structured:
+                ocr_text, ocr_structured = self._ocr_pdf(pdf)
+                all_text = ocr_text
 
         inv = Invoice(source_format="PDF")
 

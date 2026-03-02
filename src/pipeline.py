@@ -20,6 +20,35 @@ from .carbon_ledger import (
 )
 from .config import AppConfig
 
+# 非产品行关键词（表头、汇总、元数据等不得参与碳排放核算）
+_NON_PRODUCT_KEYWORDS = (
+    "价税合计", "合计（", "合计(", "小计", "买方信息", "购方", "销方",
+    "电子发票", "发票号码", "发票代码", "开票日期", "纳税人识别号", "统一社会信用",
+    "项目名称", "规格型号", "单位", "数量", "单价", "金额", "税率", "税额",
+)
+
+
+def _filter_invalid_invoice_lines(invoice: "Invoice") -> None:
+    """剔除误解析为非产品行：表头、汇总、发票号/税号被当作金额等。"""
+    amt_limit = 1e8  # 单行金额 > 1亿视为异常（多为发票号/税号误解析）
+    valid = []
+    for line in invoice.lines:
+        name = (line.name or "").strip()
+        amt = line.amount or 0.0
+        if not name:
+            continue
+        if any(kw in name for kw in _NON_PRODUCT_KEYWORDS):
+            continue
+        if amt >= amt_limit:
+            continue
+        if amt <= 0:
+            continue
+        if len(name) <= 2 and amt > 1e6:
+            continue
+        valid.append(line)
+    invoice.lines.clear()
+    invoice.lines.extend(valid)
+
 
 class CarbonAccountingPipeline:
     """
@@ -44,6 +73,7 @@ class CarbonAccountingPipeline:
         处理单张发票：分类 → 排放计算 → 碳账本条目。
         返回：classified, emission_results, ledger_entries
         """
+        _filter_invalid_invoice_lines(invoice)
         classified = self.classifier.classify_invoice(invoice)
         emission_results = self.calculator.calculate_batch(classified)
         ledger_entries = build_carbon_ledger_entries(

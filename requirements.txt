@@ -5,8 +5,9 @@ PyYAML>=6.0
 
 # 发票解析（按需安装）
 pdfplumber>=0.10.0    # PDF
-paddleocr>=2.7.0      # 图片型 PDF OCR 兜底
+paddleocr>=2.7.0      # 图片型 PDF OCR 兜底 + PP-Structure 版面/表格
 paddlepaddle>=2.5.0
+opencv-python-headless>=4.8.0  # PP-Structure 图像输入
 # ofdreader>=0.1.0     # OFD（若有）
 # lxml>=4.9.0          # XML
 
