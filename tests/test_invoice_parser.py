@@ -273,3 +273,84 @@ class TestOcrMultilineBlocks:
         assert abs(item.amount - 1.57) > 0.01, f"amount 不应为税额 1.57，实际为 {item.amount}"
 
 
+class TestStructurePostprocess:
+    """测试 PdfInvoiceParser._structure_postprocess OCR 结构化后处理"""
+
+    def _make_bbox(self, x_min, y_min, x_max, y_max):
+        return [[x_min, y_min], [x_max, y_min], [x_max, y_max], [x_min, y_max]]
+
+    def test_empty_input(self):
+        parser = PdfInvoiceParser()
+        assert parser._structure_postprocess([]) == []
+
+    def test_single_word(self):
+        parser = PdfInvoiceParser()
+        item = [self._make_bbox(0, 0, 100, 20), ("电费", 0.99)]
+        result = parser._structure_postprocess([item])
+        assert len(result) == 1
+        assert result[0]["text"] == "电费"
+        assert len(result[0]["words"]) == 1
+
+    def test_two_words_same_row(self):
+        """同一行的两个词块应被合并到同一行"""
+        parser = PdfInvoiceParser()
+        items = [
+            [self._make_bbox(0, 0, 80, 20), ("电费", 0.99)],
+            [self._make_bbox(100, 2, 180, 22), ("100.00", 0.98)],
+        ]
+        result = parser._structure_postprocess(items)
+        assert len(result) == 1, "同行词块应合并为一行"
+        assert "电费" in result[0]["text"]
+        assert "100.00" in result[0]["text"]
+
+    def test_two_words_different_rows(self):
+        """y 差距超过阈值的词块应分属不同行"""
+        parser = PdfInvoiceParser()
+        items = [
+            [self._make_bbox(0, 0, 80, 20), ("电费", 0.99)],
+            [self._make_bbox(0, 50, 80, 70), ("办公用品", 0.97)],
+        ]
+        result = parser._structure_postprocess(items)
+        assert len(result) == 2, "不同行词块应分属两行"
+
+    def test_columns_assigned(self):
+        """结构化输出应包含列信息"""
+        parser = PdfInvoiceParser()
+        items = [
+            [self._make_bbox(0, 0, 100, 20), ("货物名称", 0.99)],
+            [self._make_bbox(200, 0, 300, 20), ("金额", 0.98)],
+        ]
+        result = parser._structure_postprocess(items)
+        assert len(result) == 1
+        assert "columns" in result[0]
+        assert len(result[0]["columns"]) >= 1
+
+
+class TestClusterXCenters:
+    """测试 PdfInvoiceParser._cluster_x_centers 一维聚类"""
+
+    def test_empty(self):
+        result = PdfInvoiceParser._cluster_x_centers([], 3)
+        assert result == []
+
+    def test_single_point(self):
+        result = PdfInvoiceParser._cluster_x_centers([50.0], 2)
+        assert len(result) == 1
+
+    def test_two_clusters(self):
+        """左右各三点，应分为两个簇"""
+        centers = [10.0, 11.0, 12.0, 200.0, 201.0, 202.0]
+        labels = PdfInvoiceParser._cluster_x_centers(centers, 2)
+        assert len(labels) == 6
+        # 左侧三点属同一簇，右侧三点属同一簇
+        assert labels[0] == labels[1] == labels[2]
+        assert labels[3] == labels[4] == labels[5]
+        assert labels[0] != labels[3]
+
+    def test_n_clusters_larger_than_points(self):
+        """n_clusters > 点数时不应崩溃"""
+        centers = [10.0, 20.0]
+        labels = PdfInvoiceParser._cluster_x_centers(centers, 10)
+        assert len(labels) == 2
+
+

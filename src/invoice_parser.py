@@ -422,7 +422,10 @@ class PdfInvoiceParser(BaseInvoiceParser):
 
         # 若文本过少（图片型 PDF），尝试 OCR 兜底
         if len(all_text.strip()) < 20:
-            all_text = self._ocr_pdf(pdf)
+            ocr_text, ocr_structured = self._ocr_pdf(pdf)
+            all_text = ocr_text
+        else:
+            ocr_structured = []
 
         inv = Invoice(source_format="PDF")
 
@@ -461,9 +464,12 @@ class PdfInvoiceParser(BaseInvoiceParser):
         # 从表格中提取明细行
         inv.lines = self._extract_lines_from_tables(all_tables, all_text)
 
-        # 若表格解析未得到明细行，尝试从全文正则提取
+        # 若表格解析未得到明细行，优先使用 OCR 结构化输出，否则从全文正则提取
         if not inv.lines:
-            inv.lines = self._extract_lines_from_text(all_text)
+            if ocr_structured:
+                inv.lines = self._extract_lines_from_ocr_structured(ocr_structured)
+            if not inv.lines:
+                inv.lines = self._extract_lines_from_text(all_text)
 
         # 计算总金额
         if inv.lines:
@@ -671,6 +677,76 @@ class PdfInvoiceParser(BaseInvoiceParser):
                 ))
 
         return lines
+
+    def _extract_lines_from_ocr_structured(self, structured_rows: list) -> List[InvoiceLineItem]:
+        """从 _structure_postprocess 输出的结构化行列表中提取发票明细行。
+
+        利用列对齐信息，将数值列（金额/数量/税额）与名称列区分，
+        减少数量/金额/税额串位的概率。
+        """
+        import re
+
+        _re_name_prefix = re.compile(r'\*[^*]+\*')  # *类别*名称 格式
+        _re_numeric_col = re.compile(r'^[¥￥]?\d[\d,，.]*$')  # 数值列（含货币符号）
+        _re_tax_rate = re.compile(r'\d+(?:\.\d+)?%')
+
+        items: List[InvoiceLineItem] = []
+        for row in structured_rows:
+            columns = row.get("columns", [])
+            if not columns:
+                continue
+            # 找到名称列（第一个含汉字且匹配 *cat*name 格式的列）
+            name_col_idx = None
+            name_val = ""
+            for i, col in enumerate(columns):
+                if _re_name_prefix.search(col):
+                    name_col_idx = i
+                    name_val = col.strip()
+                    break
+
+            if name_col_idx is None or not name_val:
+                continue
+
+            # 收集右侧各数值列
+            numeric_vals = []
+            for col in columns[name_col_idx + 1:]:
+                col = col.strip()
+                if not col:
+                    continue
+                if _re_tax_rate.search(col):
+                    continue  # 跳过税率列
+                v = self._parse_number(col)
+                if v is not None:
+                    numeric_vals.append(v)
+
+            if not numeric_vals:
+                continue
+
+            # 中国发票列顺序：数量, 单价, 金额（不含税）, 税额
+            # 取倒数第二个数值作为金额（若有4个以上），否则取最后一个
+            if len(numeric_vals) >= 4:
+                quantity = numeric_vals[0] or None
+                unit_price = numeric_vals[-3] or None
+                amount = numeric_vals[-2]
+            elif len(numeric_vals) >= 2:
+                quantity = None
+                unit_price = None
+                amount = numeric_vals[-2]
+            else:
+                quantity = None
+                unit_price = None
+                amount = numeric_vals[0]
+
+            if amount and amount > 0:
+                items.append(InvoiceLineItem(
+                    name=name_val,
+                    tax_classification_name=name_val,
+                    quantity=quantity if quantity and quantity > 0 else None,
+                    unit_price=unit_price if unit_price and unit_price > 0 else None,
+                    amount=amount,
+                ))
+
+        return items
 
     def _extract_from_ocr_blocks(self, raw_lines: list) -> List[InvoiceLineItem]:
         """Block-based multi-line OCR merging for scanned/image PDFs.
