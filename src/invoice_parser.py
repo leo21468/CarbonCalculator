@@ -237,11 +237,8 @@ class PdfInvoiceParser(BaseInvoiceParser):
         finally:
             pdf.close()
 
-    def _ocr_pdf(self, pdf) -> tuple:
-        """使用 PaddleOCR 对 PDF 各页图片进行 OCR，返回 (文本, 结构化行列表) 元组。
-
-        结构化行列表格式：[{'text': str, 'words': [...], 'columns': [...]}]
-        """
+    def _ocr_pdf(self, pdf) -> str:
+        """使用 PaddleOCR 对 PDF 各页图片进行 OCR，返回结构化后处理结果的拼接文本"""
         try:
             from paddleocr import PaddleOCR
         except ImportError:
@@ -254,140 +251,162 @@ class PdfInvoiceParser(BaseInvoiceParser):
         ocr = PdfInvoiceParser._ocr_instance
 
         import numpy as np
-        all_items = []
+        all_page_results = []
         for page in pdf.pages:
             img = page.to_image(resolution=150).original  # PIL Image
             result = ocr.ocr(np.array(img), cls=True)
-            if not result or not result[0]:
-                continue
-            all_items.extend(result[0])
+            if result and result[0]:
+                all_page_results.append(result[0])
 
-        structured = self._structure_postprocess(all_items)
-        text = "\n".join(row["text"] for row in structured)
-        return text, structured
+        structured = self._structure_postprocess(all_page_results)
+        return "\n".join(page["full_text"] for page in structured)
+
+    def _structure_postprocess(self, all_page_results: list) -> list:
+        """对 PaddleOCR 识别结果进行结构化后处理，降低列串位。
+
+        参数:
+            all_page_results: 每页 OCR 结果的列表（每元素为 PaddleOCR 单页结果列表）。
+
+        返回:
+            list of dict，每个元素描述一页：
+            {
+                "page": int,
+                "rows": [{"y_center": float, "words": [...], "columns": [...]}],
+                "full_text": str,
+            }
+        """
+        import statistics
+
+        pages_output = []
+
+        for page_idx, page_items in enumerate(all_page_results):
+            if not page_items:
+                pages_output.append({"page": page_idx + 1, "rows": [], "full_text": ""})
+                continue
+
+            # ── 1. 从 bbox 计算每个词块的中心坐标 ──────────────────────────
+            words = []
+            for item in page_items:
+                bbox = item[0]   # 4 点坐标：[[x0,y0],[x1,y0],[x1,y1],[x0,y1]]
+                text = item[1][0]
+                score = item[1][1] if len(item[1]) > 1 else 1.0
+                xs = [pt[0] for pt in bbox]
+                ys = [pt[1] for pt in bbox]
+                x0, x1 = min(xs), max(xs)
+                y0, y1 = min(ys), max(ys)
+                x_center = (x0 + x1) / 2.0
+                y_center = (y0 + y1) / 2.0
+                words.append({
+                    "text": text,
+                    "x_center": x_center,
+                    "x0": x0, "x1": x1,
+                    "y0": y0, "y1": y1,
+                    "y_center": y_center,
+                    "score": score,
+                })
+
+            # ── 2. 行归并：按 y_center 聚合，自适应阈值 ──────────────────────
+            heights = [w["y1"] - w["y0"] for w in words if w["y1"] > w["y0"]]
+            if heights:
+                median_h = statistics.median(heights)
+                row_threshold = max(median_h * 0.6, 5.0)
+            else:
+                row_threshold = 10.0
+
+            sorted_words = sorted(words, key=lambda w: w["y_center"])
+            rows: list = []
+            for word in sorted_words:
+                placed = False
+                for row in rows:
+                    if abs(word["y_center"] - row["y_center"]) <= row_threshold:
+                        row["words"].append(word)
+                        # 更新行的 y_center 为均值
+                        row["y_center"] = sum(w["y_center"] for w in row["words"]) / len(row["words"])
+                        placed = True
+                        break
+                if not placed:
+                    rows.append({"y_center": word["y_center"], "words": [word]})
+
+            # 行内按 x 升序排列
+            for row in rows:
+                row["words"].sort(key=lambda w: w["x_center"])
+
+            # ── 3. 列识别：对所有词块 x_center 做 1-D 聚类 ────────────────────
+            all_x = [w["x_center"] for w in words]
+            if all_x:
+                col_centers = self._cluster_columns(all_x)
+            else:
+                col_centers = []
+
+            # 为每个 row 生成按列对齐的列文本列表
+            if col_centers:
+                num_cols = len(col_centers)
+                for row in rows:
+                    col_texts = [""] * num_cols
+                    for word in row["words"]:
+                        # 找到最近的列
+                        col_idx = min(
+                            range(num_cols),
+                            key=lambda i: abs(col_centers[i] - word["x_center"]),
+                        )
+                        col_texts[col_idx] = (col_texts[col_idx] + " " + word["text"]).strip()
+                    row["columns"] = col_texts
+            else:
+                for row in rows:
+                    row["columns"] = [w["text"] for w in row["words"]]
+
+            # ── 4. 构建 full_text（行内以空格分隔，行间以换行分隔）────────────
+            line_texts = [" ".join(w["text"] for w in row["words"]) for row in rows]
+            full_text = "\n".join(line_texts)
+
+            pages_output.append({
+                "page": page_idx + 1,
+                "rows": rows,
+                "full_text": full_text,
+            })
+
+        return pages_output
 
     @staticmethod
-    def _cluster_x_centers(centers: list, n_clusters: int) -> list:
-        """简单一维聚类：将 x 中心点分组为 n_clusters 个簇，返回每个中心对应的簇索引列表。
+    def _cluster_columns(x_centers: list) -> list:
+        """对 x 坐标列表做轻量 1-D 聚类，返回各列中心点列表（升序）。
 
-        优先尝试使用 sklearn KMeans；不可用时回退到基于排序的均匀分箱策略。
+        优先尝试 sklearn KMeans；若不可用则使用基于间距的分箱算法。
         """
-        if not centers or n_clusters <= 0:
-            return [0] * len(centers)
-        n = min(n_clusters, len(centers))
+        if not x_centers:
+            return []
+
+        # 估计列数：目标约 5 列（发票表格常见列数），上限 10
+        n_cols = min(max(1, len(x_centers) // max(1, len(x_centers) // 5)), 10)
+
         try:
             from sklearn.cluster import KMeans
             import numpy as np
-            km = KMeans(n_clusters=n, n_init=10, random_state=0)
-            labels = km.fit_predict(np.array(centers).reshape(-1, 1)).tolist()
-            # Relabel so that cluster with smallest centroid gets index 0
-            centroids = km.cluster_centers_.flatten().tolist()
-            order = sorted(range(n), key=lambda i: centroids[i])
-            remap = {old: new for new, old in enumerate(order)}
-            return [remap[l] for l in labels]
+            arr = np.array(x_centers).reshape(-1, 1)
+            km = KMeans(n_clusters=n_cols, random_state=0)
+            km.fit(arr)
+            centers = sorted(float(c[0]) for c in km.cluster_centers_)
+            return centers
         except Exception:
             pass
-        # Fallback: sort-based uniform binning
-        sorted_vals = sorted(set(centers))
-        bin_size = max(1, len(sorted_vals) // n)
-        val_to_bin = {}
-        for idx, v in enumerate(sorted_vals):
-            val_to_bin[v] = min(idx // bin_size, n - 1)
-        return [val_to_bin[c] for c in centers]
 
-    def _structure_postprocess(self, ocr_results: list) -> list:
-        """将 PaddleOCR 结果后处理为结构化行列表。
+        # 降级：基于相邻间距的分箱
+        sorted_x = sorted(x_centers)
+        if len(sorted_x) < 2:
+            return sorted_x[:]
 
-        输入：ocr_results — PaddleOCR ocr() 返回的 list of [bbox, (text, score)]
-        输出：[{'text': str, 'words': [{'text', 'x', 'y', 'w', 'h', 'score'}], 'columns': [str, ...]}]
+        gaps = [sorted_x[i + 1] - sorted_x[i] for i in range(len(sorted_x) - 1)]
+        avg_gap = sum(gaps) / len(gaps)
+        split_threshold = avg_gap * 1.5
 
-        策略：
-        1. 解析每项的中点坐标与 bbox 尺寸。
-        2. 按 y 中心值聚合同行词块（行阈值 = 平均字高的 0.6 倍）。
-        3. 对所有词块的 x 中心做一维聚类，估算列数。
-        4. 数值列（金额/数量/税额）对齐到右侧列。
-        5. 返回结构化行。
-        """
-        import re
+        clusters: list = [[sorted_x[0]]]
+        for x in sorted_x[1:]:
+            if x - clusters[-1][-1] > split_threshold:
+                clusters.append([x])
+            else:
+                clusters[-1].append(x)
 
-        if not ocr_results:
-            return []
-
-        # Step 1: Parse each recognition item
-        words = []
-        for item in ocr_results:
-            try:
-                bbox, (text, score) = item
-            except (TypeError, ValueError):
-                continue
-            xs = [pt[0] for pt in bbox]
-            ys = [pt[1] for pt in bbox]
-            x_min, x_max = min(xs), max(xs)
-            y_min, y_max = min(ys), max(ys)
-            cx = (x_min + x_max) / 2.0
-            cy = (y_min + y_max) / 2.0
-            w = x_max - x_min
-            h = y_max - y_min
-            words.append({"text": text, "score": score, "x": cx, "y": cy, "w": w, "h": h})
-
-        if not words:
-            return []
-
-        # Step 2: Group into rows by y-center proximity
-        avg_h = sum(w["h"] for w in words) / len(words)
-        y_threshold = avg_h * 0.6
-
-        words_sorted = sorted(words, key=lambda w: w["y"])
-        rows: list = []  # list of list of word dicts
-        for word in words_sorted:
-            placed = False
-            for row in rows:
-                row_cy = sum(w["y"] for w in row) / len(row)
-                if abs(word["y"] - row_cy) <= y_threshold:
-                    row.append(word)
-                    placed = True
-                    break
-            if not placed:
-                rows.append([word])
-
-        # Sort words within each row by x
-        for row in rows:
-            row.sort(key=lambda w: w["x"])
-
-        # Step 3: Estimate column count and cluster x centers
-        all_x = [w["x"] for row in rows for w in row]
-        avg_per_row = len(all_x) / max(len(rows), 1)
-        n_clusters = max(2, round(avg_per_row))
-        col_labels = self._cluster_x_centers(all_x, n_clusters)
-
-        # Assign column index to each word (global order matches all_x order)
-        idx = 0
-        for row in rows:
-            for word in row:
-                word["col"] = col_labels[idx]
-                idx += 1
-
-        # Step 4: Determine number of columns and build column arrays per row
-        num_cols = max(col_labels) + 1 if col_labels else 1
-        _re_numeric = re.compile(r'^[¥￥\-]?\d[\d,，. ]*$|^\d[\d,，.]*[元]?$')
-
-        structured_rows = []
-        for row in rows:
-            columns = [""] * num_cols
-            for word in row:
-                col_idx = word["col"]
-                if columns[col_idx]:
-                    columns[col_idx] += word["text"]
-                else:
-                    columns[col_idx] = word["text"]
-            row_text = " ".join(w["text"] for w in row)
-            structured_rows.append({
-                "text": row_text,
-                "words": row,
-                "columns": columns,
-            })
-
-        return structured_rows
+        return [sum(c) / len(c) for c in clusters]
 
     def _extract_invoice(self, pdf) -> Invoice:
         """从 PDF 中提取发票信息"""
