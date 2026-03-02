@@ -5,6 +5,9 @@ PyYAML>=6.0
 
 # 发票解析（按需安装）
 pdfplumber>=0.10.0    # PDF
+paddleocr>=2.7.0      # 图片型 PDF OCR 兜底
+paddlepaddle-gpu>=2.5.0  # PaddleOCR GPU 加速依赖（有 GPU/CUDA 时安装此包）
+# paddlepaddle>=2.5.0  # CPU-only 环境请改用此包（与 paddlepaddle-gpu 二选一）
 # ofdreader>=0.1.0     # OFD（若有）
 # lxml>=4.9.0          # XML
 
