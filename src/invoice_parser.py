@@ -237,8 +237,8 @@ class PdfInvoiceParser(BaseInvoiceParser):
         finally:
             pdf.close()
 
-    def _ocr_pdf(self, pdf) -> str:
-        """使用 PaddleOCR 对 PDF 各页图片进行 OCR，返回结构化后处理结果的拼接文本"""
+    def _ocr_pdf(self, pdf) -> tuple[str, list]:
+        """使用 PaddleOCR 对 PDF 各页图片进行 OCR，返回 (拼接文本, 结构化页列表) 元组"""
         try:
             from paddleocr import PaddleOCR
         except ImportError:
@@ -259,7 +259,8 @@ class PdfInvoiceParser(BaseInvoiceParser):
                 all_page_results.append(result[0])
 
         structured = self._structure_postprocess(all_page_results)
-        return "\n".join(page["full_text"] for page in structured)
+        ocr_text = "\n".join(page["full_text"] for page in structured)
+        return ocr_text, structured
 
     def _structure_postprocess(self, all_page_results: list) -> list:
         """对 PaddleOCR 识别结果进行结构化后处理，降低列串位。
