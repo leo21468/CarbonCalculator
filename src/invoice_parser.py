@@ -194,6 +194,21 @@ class JsonXmlInvoiceParser(BaseInvoiceParser):
                         return t
             return None
 
+        def find_text_excluding(parent, accept: tuple, exclude: tuple):
+            """查找文本，接受 accept 中的标签，排除 exclude（如税额 se）"""
+            if parent is None:
+                return None
+            ex_set = {str(x) for x in exclude}
+            acc_set = {str(x) for x in accept}
+            for child in parent:
+                if tag(child) in ex_set:
+                    continue
+                if tag(child) in acc_set:
+                    t = text(child)
+                    if t:
+                        return t
+            return None
+
         def find_text_recursive(node, *names):
             """递归查找首个匹配的叶子文本（用于嵌套结构如 REQUEST/BODY/Invoice）"""
             if node is None:
@@ -223,10 +238,11 @@ class JsonXmlInvoiceParser(BaseInvoiceParser):
         collect_tax_codes(root, tax_codes)
 
         detail_paths = [
-            "FPDetail", "FPMX", "fpDetail", "fpmx", "Detail", "Items", "items",
-            "Goods", "goods", "COMMON_FPKJ_XMXXS", "COMMON_FPKJ_XMXX",
+            "EInvoiceData", "eInvoiceData", "FPDetail", "FPMX", "FPDMX", "fpDetail", "fpmx", "fpdmx",
+            "Detail", "Details", "Items", "items", "Goods", "goods", "COMMON_FPKJ_XMXXS", "COMMON_FPKJ_XMXX",
+            "FPMXXX", "fpmxxx", "HXMX", "hxmx", "XMX", "xmx", "MXXX", "mxxx",
         ]
-        row_tags = ["Item", "item", "Row", "row", "COMMON_FPKJ_XMXX"]
+        row_tags = ["IssuItemInformation", "issuItemInformation", "Item", "item", "Row", "row", "COMMON_FPKJ_XMXX"]
 
         # 递归查找明细容器节点
         def find_container(node, paths_set):
@@ -243,6 +259,18 @@ class JsonXmlInvoiceParser(BaseInvoiceParser):
         paths_set = set(detail_paths)
         items_container = find_container(root, paths_set)
 
+        def collect_row_like_nodes(node, acc: list):
+            """递归收集形如明细行的节点（含金额且含名称或数量，排除税额）"""
+            if node is None:
+                return
+            name_ok = find_text(node, "name", "Name", "hwmc", "XMMC", "xmmc", "spmc", "项目名称")
+            amount_ok = find_text_excluding(node, ("amount", "je", "JE", "XMJE", "xmje", "金额"), ("se", "SE", "税额"))
+            qty_ok = find_text(node, "quantity", "sl", "XMSL", "xmsl", "数量")
+            if amount_ok and (name_ok or qty_ok):
+                acc.append(node)
+            for child in node:
+                collect_row_like_nodes(child, acc)
+
         lines = []
         if items_container is not None:
             candidates = []
@@ -252,25 +280,30 @@ class JsonXmlInvoiceParser(BaseInvoiceParser):
                 elif tag(child) in ("Item", "COMMON_FPKJ_XMXX"):
                     candidates.append(child)
             if not candidates:
-                # 可能 Item 在下一层
                 for child in items_container:
                     for sub in child:
                         if tag(sub) in row_tags:
                             candidates.append(sub)
+            if not candidates:
+                collect_row_like_nodes(root, candidates)
             for idx, row in enumerate(candidates):
-                name = find_text(row, "name", "Name", "hwmc", "HWMC", "goodsName", "spmc", "SPMC", "XMMC", "xmmc", "项目名称")
-                tax_code = find_text(row, "taxCode", "TaxCode", "spbm", "SPBM", "ssbm", "ssflbm", "税收分类编码")
+                name = find_text(row, "name", "Name", "ItemName", "itemName", "hwmc", "HWMC", "goodsName", "spmc", "SPMC", "XMMC", "xmmc", "项目名称")
+                tax_code = find_text(row, "taxCode", "TaxCode", "TaxClassificationCode", "taxClassificationCode", "spbm", "SPBM", "ssbm", "ssflbm", "税收分类编码")
                 if not tax_code and idx < len(tax_codes):
                     tax_code = tax_codes[idx]
                 if tax_code and (len(tax_code) != 19 or not tax_code.isdigit()):
                     tax_code = "".join(c for c in tax_code if c.isdigit())
                     tax_code = tax_code if len(tax_code) == 19 else None
-                amount_s = find_text(row, "amount", "Amount", "je", "JE", "XMJE", "xmje", "金额")
+                amount_s = find_text_excluding(
+                    row,
+                    ("amount", "Amount", "je", "JE", "XMJE", "xmje", "金额", "hj", "HJ"),
+                    ("se", "SE", "ComTaxAm", "comTaxAm", "税额"),  # 排除税额
+                )
                 amount = float(amount_s) if amount_s else 0.0
-                quantity_s = find_text(row, "quantity", "Quantity", "sl", "SL", "XMSL", "xmsl", "数量")
+                quantity_s = find_text(row, "quantity", "Quantity", "Quantity", "sl", "SL", "XMSL", "xmsl", "数量")
                 quantity = float(quantity_s) if quantity_s else None
-                unit = find_text(row, "unit", "Unit", "dw", "DW", "单位")
-                price_s = find_text(row, "price", "Price", "dj", "DJ", "XMDJ", "xmdj", "单价")
+                unit = find_text(row, "unit", "Unit", "MeaUnits", "meaUnits", "dw", "DW", "单位")
+                price_s = find_text(row, "price", "Price", "UnPrice", "unPrice", "dj", "DJ", "XMDJ", "xmdj", "单价")
                 unit_price = float(price_s) if price_s else None
                 lines.append({
                     "name": name or "",
@@ -282,7 +315,7 @@ class JsonXmlInvoiceParser(BaseInvoiceParser):
                 })
 
         total_amount = 0.0
-        total_s = find_text_recursive(root, "totalAmount", "TotalAmount", "hjje", "HJJE", "价税合计", "合计金额")
+        total_s = find_text_recursive(root, "totalAmount", "TotalAmount", "TotalAmWithoutTax", "totalAmWithoutTax", "TotalTax-includedAmount", "hjje", "HJJE", "价税合计", "合计金额")
         if total_s:
             try:
                 total_amount = float(total_s)
@@ -291,10 +324,10 @@ class JsonXmlInvoiceParser(BaseInvoiceParser):
         if not total_amount and lines:
             total_amount = sum(line.get("amount", 0) or 0 for line in lines)
 
-        invoice_number = find_text_recursive(root, "invoiceNumber", "fpdm", "FPDM", "invoiceNo", "发票代码", "发票号码")
-        invoice_date = find_text_recursive(root, "invoiceDate", "kprq", "KPRQ", "date", "开票日期")
-        seller_name = find_text_recursive(root, "sellerName", "xfmc", "XFMC", "销方名称", "销售方")
-        buyer_name = find_text_recursive(root, "buyerName", "gfmc", "GFMC", "购方名称", "购买方")
+        invoice_number = find_text_recursive(root, "invoiceNumber", "InvoiceNumber", "EIid", "eiid", "fpdm", "FPDM", "invoiceNo", "发票代码", "发票号码")
+        invoice_date = find_text_recursive(root, "invoiceDate", "IssueTime", "issueTime", "kprq", "KPRQ", "date", "开票日期")
+        seller_name = find_text_recursive(root, "sellerName", "SellerName", "sellerName", "xfmc", "XFMC", "销方名称", "销售方")
+        buyer_name = find_text_recursive(root, "buyerName", "BuyerName", "buyerName", "gfmc", "GFMC", "购方名称", "购买方")
 
         return {
             "invoice_number": invoice_number,
@@ -622,7 +655,7 @@ class PdfInvoiceParser(BaseInvoiceParser):
         import re
 
         lines = []
-        # 中国发票表格列名关键词
+                # 中国发票表格列名关键词（列序：项目名称、规格型号、单位、数量、单价、金额、税率、税额）
         name_keywords = ("货物", "名称", "劳务", "项目", "服务")
         qty_keywords = ("数量",)
         unit_keywords = ("单位",)
@@ -874,7 +907,7 @@ class PdfInvoiceParser(BaseInvoiceParser):
                 if nums:
                     numeric_cols.append(nums)
 
-            # 展平为按列位顺序的数值列表，利用空间位置：从左到右通常为 数量, 单价, 金额, 税额
+            # 展平为按列位顺序的数值列表。中国发票列序：项目名称、规格型号、单位、数量、单价、金额、税率/征收率、税额
             all_nums = []
             for nums_in_col in numeric_cols:
                 all_nums.extend(nums_in_col)
@@ -882,7 +915,7 @@ class PdfInvoiceParser(BaseInvoiceParser):
             if not all_nums:
                 continue
 
-            # 空间位置启发式：金额多为 2 位小数，数量多为整数；列顺序 数量,单价,金额,税额
+            # 空间位置启发式：列序为 项目名称、规格型号、单位、数量、单价、金额、税率、税额
             def looks_like_amount(v: float) -> bool:
                 """金额通常有 2 位小数，且为正值"""
                 if v <= 0:
@@ -895,20 +928,18 @@ class PdfInvoiceParser(BaseInvoiceParser):
                     return False
                 return abs(v - round(v, 4)) < 1e-9
 
-            # 分离：优先将 2 位小数的值视为金额，整数视为数量
-            amount_candidates = [n for n in all_nums if looks_like_amount(n) and n > 1]
             qty_candidates = [n for n in all_nums if looks_like_quantity(n) and n <= 99999]
-            # 排除税率范围（0.03, 0.06, 0.09, 0.13 等）
-            amount_candidates = [n for n in amount_candidates if n < 0.2 or n > 1]
+            # 排除税额：最右列为税额，倒数第二列为金额；列序：…数量、单价、金额、税率、税额
+            nums_excl_tax = all_nums[:-1] if len(all_nums) >= 2 else all_nums
+            amount_candidates = [n for n in nums_excl_tax if looks_like_amount(n) and n > 1 and (n < 0.2 or n > 1)]
 
             if len(all_nums) >= 4:
-                # 标准列序：数量, 单价, 金额, 税额
+                # 列序 …数量、单价、金额、税率、税额；金额取倒数第二列（排除税额）
                 quantity = all_nums[0] if qty_candidates and all_nums[0] in qty_candidates else (qty_candidates[0] if qty_candidates else None)
                 unit_price = all_nums[-3] if len(all_nums) >= 3 else None
-                amount = amount_candidates[-1] if amount_candidates else (all_nums[-2] if len(all_nums) >= 2 else all_nums[-1])
+                amount = all_nums[-2]  # 明确取倒数第二列（金额），最后一列是税额
             elif len(all_nums) >= 2:
-                # 取 2 位小数的为金额，否则取最后一个
-                amount = amount_candidates[-1] if amount_candidates else all_nums[-1]
+                amount = all_nums[-2] if len(all_nums) >= 2 else all_nums[-1]
                 quantity = qty_candidates[0] if qty_candidates and qty_candidates[0] != amount else None
                 unit_price = None
             else:
