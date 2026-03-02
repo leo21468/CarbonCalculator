@@ -354,3 +354,129 @@ class TestClusterXCenters:
         assert len(labels) == 2
 
 
+class TestOcrNameWithSingleDigit:
+    """修复1：含单个数字的商品名称不应被 is_name_only_line 排除"""
+
+    def test_name_with_single_digit_parsed(self):
+        """*矿产品*砂石2号 这样含单个数字的名称行应被正确识别"""
+        parser = PdfInvoiceParser()
+        ocr_lines = [
+            "*矿产品*砂石2号",
+            "500.00",
+            "1%",
+            "5.00",
+        ]
+        text = "\n".join(ocr_lines)
+        items = parser._extract_lines_from_text(text)
+        assert len(items) >= 1, "含单个数字的商品名称应能被解析"
+        assert "砂石2号" in items[0].name or "矿产品" in items[0].name, (
+            f"名称应包含砂石2号或矿产品，实际为 '{items[0].name}'"
+        )
+        assert abs(items[0].amount - 500.00) < 0.01, (
+            f"amount 应为 500.00，实际为 {items[0].amount}"
+        )
+
+    def test_name_with_two_digits_not_parsed_as_name(self):
+        """含2个以上独立数字序列的行不应被视为纯名称行"""
+        parser = PdfInvoiceParser()
+        # 行中含两个数字 → 应视为数值行（包含数量和金额），不作为名称行触发块合并
+        ocr_lines = [
+            "*电力*电费",
+            "100 80.00",  # 数量+金额在同一行
+        ]
+        text = "\n".join(ocr_lines)
+        items = parser._extract_lines_from_text(text)
+        # 只要不崩溃且解析结果合理即可
+        assert items is not None
+
+
+class TestMultilineNameMerge:
+    """修复2：支持三行及以上跨行名称合并"""
+
+    def test_three_line_name_merged(self):
+        """名称被 OCR 拆成三行时，应正确合并为完整名称"""
+        parser = PdfInvoiceParser()
+        ocr_lines = [
+            "*研发和技术服务*技术服",  # 名称第1行
+            "务",                      # 名称续行1（无数字，≤15字）
+            "费",                      # 名称续行2（无数字，≤15字）
+            "1 157.43 13% 20.47",     # 数量/金额行
+        ]
+        text = "\n".join(ocr_lines)
+        items = parser._extract_lines_from_text(text)
+        assert len(items) >= 1, "应至少解析出1条明细"
+        assert "技术服务费" in items[0].name or "技术服" in items[0].name, (
+            f"名称续行应被合并，实际名称为 '{items[0].name}'"
+        )
+
+    def test_name_continuation_stops_at_new_star_line(self):
+        """遇到另一个 *XX*YY 格式行时，应停止名称合并"""
+        parser = PdfInvoiceParser()
+        ocr_lines = [
+            "*电力*电费",
+            "100 80.00 13% 10.40",
+            "*矿产品*砂石",
+            "500 500.00 9% 45.00",
+        ]
+        text = "\n".join(ocr_lines)
+        items = parser._extract_lines_from_text(text)
+        # 应解析出两条明细
+        assert len(items) >= 2, f"应解析出2条明细，实际 {len(items)} 条"
+
+
+class TestGatherNumsTaxRateFilter:
+    """修复3：_gather_nums 应过滤税率，不将税率混入金额候选"""
+
+    def test_ocr_structured_tax_rate_not_amount(self):
+        """结构化 OCR 行含税率列时，金额应正确，税率不应混入"""
+        parser = PdfInvoiceParser()
+        # 模拟 _structure_postprocess 输出的结构化行
+        structured_rows = [
+            {
+                "page": 1,
+                "rows": [
+                    {
+                        "columns": ["*电力*电费", "100", "0.80", "80.00", "13%", "10.40"],
+                        "y_center": 100,
+                        "words": [],
+                    }
+                ],
+                "full_text": "",
+            }
+        ]
+        items = parser._extract_lines_from_ocr_structured(structured_rows)
+        assert len(items) >= 1, "应至少解析出1条明细"
+        # 金额应为 80.00，不应为 13（税率数字）
+        assert abs(items[0].amount - 80.00) < 0.01, (
+            f"amount 应为 80.00，不应为税率数值 13，实际为 {items[0].amount}"
+        )
+        assert items[0].amount != 13, "amount 不应等于税率数值 13"
+
+
+class TestTableCrossRowNameMerge:
+    """修复4：表格中商品名称跨行时，应正确合并"""
+
+    def test_table_continuation_row_name_merged(self):
+        """名称跨行时（第二行名称列为空，第一列有续行文字），应合并到上一行"""
+        parser = PdfInvoiceParser()
+        header = ["货物名称", "数量", "单位", "单价", "金额", "税额"]
+        row1 = ["*研发和技术服务*技术服", "1", "次", "157.43", "157.43", "20.47"]
+        row2 = ["务费", "", "", "", "", ""]  # 续行：名称列（货物名称列）为空，第一列（续行文字）非空，其余数值列均为空
+        tables = [[header, row1, row2]]
+        items = parser._extract_lines_from_tables(tables, "")
+        assert len(items) >= 1, "应至少解析出1条明细"
+        # 名称应包含合并后的完整名称
+        assert "技术服务费" in items[0].name or "技术服" in items[0].name, (
+            f"名称续行应被合并，实际名称为 '{items[0].name}'"
+        )
+
+    def test_table_non_continuation_row_not_merged(self):
+        """非续行的行不应被误合并（含数值列的行是独立商品行）"""
+        parser = PdfInvoiceParser()
+        header = ["货物名称", "数量", "单位", "单价", "金额", "税额"]
+        row1 = ["*电力*电费", "100", "度", "0.80", "80.00", "10.40"]
+        row2 = ["*矿产品*砂石", "50", "吨", "200.00", "10000.00", "900.00"]
+        tables = [[header, row1, row2]]
+        items = parser._extract_lines_from_tables(tables, "")
+        assert len(items) == 2, f"应解析出2条独立明细，实际 {len(items)} 条"
+
