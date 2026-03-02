@@ -166,17 +166,147 @@ class JsonXmlInvoiceParser(BaseInvoiceParser):
         return self._build_invoice(raw)
 
     def _xml_to_dict(self, xml_text: str) -> dict:
-        """简单占位：实际可用 lxml 解析 XML 为统一 dict 结构"""
+        """解析 XML 为 _build_invoice 期望的 dict 结构（含 lines、invoice_number 等）。"""
         try:
             import xml.etree.ElementTree as ET
             root = ET.fromstring(xml_text)
-            return self._element_to_dict(root)
-        except ET.ParseError as e:
-            # Specific exception for XML parsing errors
+            return self._xml_to_invoice_dict(root)
+        except ET.ParseError:
             return {}
 
+    def _xml_to_invoice_dict(self, root) -> dict:
+        """从 XML 根节点提取发票字段，映射为 {lines, invoice_number, seller, ...}"""
+        # 去除可能的命名空间前缀，便于匹配
+        def tag(el):
+            return el.tag.split("}")[-1] if el.tag and "}" in el.tag else (el.tag or "")
+
+        def text(el, default: str = ""):
+            return (el.text or "").strip() if el is not None else default
+
+        def find_text(parent, *names):
+            if parent is None:
+                return None
+            names_set = {n for n in names}
+            for child in parent:
+                if tag(child) in names_set:
+                    t = text(child)
+                    if t:
+                        return t
+            return None
+
+        def find_text_recursive(node, *names):
+            """递归查找首个匹配的叶子文本（用于嵌套结构如 REQUEST/BODY/Invoice）"""
+            if node is None:
+                return None
+            names_set = {n for n in names}
+            if tag(node) in names_set:
+                t = text(node)
+                if t:
+                    return t
+            for child in node:
+                v = find_text_recursive(child, *names)
+                if v:
+                    return v
+            return None
+
+        # 递归收集所有 19 位税收编码
+        def collect_tax_codes(node, acc: list):
+            if node is None:
+                return
+            t = text(node) if hasattr(node, "text") else ""
+            if t and len(t.replace(" ", "")) == 19 and t.replace(" ", "").isdigit():
+                acc.append(t.replace(" ", ""))
+            for child in node:
+                collect_tax_codes(child, acc)
+
+        tax_codes = []
+        collect_tax_codes(root, tax_codes)
+
+        detail_paths = [
+            "FPDetail", "FPMX", "fpDetail", "fpmx", "Detail", "Items", "items",
+            "Goods", "goods", "COMMON_FPKJ_XMXXS", "COMMON_FPKJ_XMXX",
+        ]
+        row_tags = ["Item", "item", "Row", "row", "COMMON_FPKJ_XMXX"]
+
+        # 递归查找明细容器节点
+        def find_container(node, paths_set):
+            if node is None:
+                return None
+            if tag(node) in paths_set:
+                return node
+            for child in node:
+                found = find_container(child, paths_set)
+                if found:
+                    return found
+            return None
+
+        paths_set = set(detail_paths)
+        items_container = find_container(root, paths_set)
+
+        lines = []
+        if items_container is not None:
+            candidates = []
+            for child in items_container:
+                if tag(child) in row_tags:
+                    candidates.append(child)
+                elif tag(child) in ("Item", "COMMON_FPKJ_XMXX"):
+                    candidates.append(child)
+            if not candidates:
+                # 可能 Item 在下一层
+                for child in items_container:
+                    for sub in child:
+                        if tag(sub) in row_tags:
+                            candidates.append(sub)
+            for idx, row in enumerate(candidates):
+                name = find_text(row, "name", "Name", "hwmc", "HWMC", "goodsName", "spmc", "SPMC", "XMMC", "xmmc", "项目名称")
+                tax_code = find_text(row, "taxCode", "TaxCode", "spbm", "SPBM", "ssbm", "ssflbm", "税收分类编码")
+                if not tax_code and idx < len(tax_codes):
+                    tax_code = tax_codes[idx]
+                if tax_code and (len(tax_code) != 19 or not tax_code.isdigit()):
+                    tax_code = "".join(c for c in tax_code if c.isdigit())
+                    tax_code = tax_code if len(tax_code) == 19 else None
+                amount_s = find_text(row, "amount", "Amount", "je", "JE", "XMJE", "xmje", "金额")
+                amount = float(amount_s) if amount_s else 0.0
+                quantity_s = find_text(row, "quantity", "Quantity", "sl", "SL", "XMSL", "xmsl", "数量")
+                quantity = float(quantity_s) if quantity_s else None
+                unit = find_text(row, "unit", "Unit", "dw", "DW", "单位")
+                price_s = find_text(row, "price", "Price", "dj", "DJ", "XMDJ", "xmdj", "单价")
+                unit_price = float(price_s) if price_s else None
+                lines.append({
+                    "name": name or "",
+                    "amount": amount,
+                    "tax_classification_code": tax_code,
+                    "quantity": quantity,
+                    "unit": unit,
+                    "unit_price": unit_price,
+                })
+
+        total_amount = 0.0
+        total_s = find_text_recursive(root, "totalAmount", "TotalAmount", "hjje", "HJJE", "价税合计", "合计金额")
+        if total_s:
+            try:
+                total_amount = float(total_s)
+            except ValueError:
+                pass
+        if not total_amount and lines:
+            total_amount = sum(line.get("amount", 0) or 0 for line in lines)
+
+        invoice_number = find_text_recursive(root, "invoiceNumber", "fpdm", "FPDM", "invoiceNo", "发票代码", "发票号码")
+        invoice_date = find_text_recursive(root, "invoiceDate", "kprq", "KPRQ", "date", "开票日期")
+        seller_name = find_text_recursive(root, "sellerName", "xfmc", "XFMC", "销方名称", "销售方")
+        buyer_name = find_text_recursive(root, "buyerName", "gfmc", "GFMC", "购方名称", "购买方")
+
+        return {
+            "invoice_number": invoice_number,
+            "date": invoice_date,
+            "total_amount": total_amount,
+            "lines": lines,
+            "seller": {"name": seller_name} if seller_name else None,
+            "buyer": {"name": buyer_name} if buyer_name else None,
+        }
+
     def _element_to_dict(self, el) -> dict:
-        """将 XML 节点转为 dict（简化版，可按实际发票 XML 结构扩展）"""
+        """将 XML 节点转为 dict（兼容旧逻辑，现由 _xml_to_invoice_dict 主导）"""
         d = {}
         for child in el:
             if len(child) == 0:
@@ -600,6 +730,10 @@ class PdfInvoiceParser(BaseInvoiceParser):
                 i += 1
         processed_text = "\n".join(merged_lines)
 
+        with open("dump_merged_lines.txt", "w", encoding="utf-8") as f:
+            for idx, ln in enumerate(merged_lines):
+                f.write(f"[{idx}] {ln}\n")
+
         # Pattern 1: *类别*名称 + numbers (existing pattern)
         pattern = re.compile(
             r"(\*[^*]+\*[^\s]+)\s+"
@@ -682,19 +816,28 @@ class PdfInvoiceParser(BaseInvoiceParser):
         return lines
 
     def _extract_lines_from_ocr_structured(self, structured_rows: list) -> List[InvoiceLineItem]:
-        """从 _structure_postprocess 输出的结构化行列表中提取发票明细行。
+        """从 _structure_postprocess 输出的结构化页列表中提取发票明细行。
 
         利用列对齐信息，将数值列（金额/数量/税额）与名称列区分，
         减少数量/金额/税额串位的概率。
+
+        structured_rows: 页列表 [{page, rows: [{columns: [...]}, ...], full_text}, ...]，
+        需先按行展开再处理。
         """
         import re
+
+        # 展开页列表为行列表（修复：原逻辑误将“页”当作“行”遍历）
+        all_rows = []
+        for page_dict in structured_rows:
+            for row in page_dict.get("rows", []):
+                all_rows.append(row)
 
         _re_name_prefix = re.compile(r'\*[^*]+\*')  # *类别*名称 格式
         _re_numeric_col = re.compile(r'^[¥￥]?\d[\d,，.]*$')  # 数值列（含货币符号）
         _re_tax_rate = re.compile(r'\d+(?:\.\d+)?%')
 
         items: List[InvoiceLineItem] = []
-        for row in structured_rows:
+        for row in all_rows:
             columns = row.get("columns", [])
             if not columns:
                 continue
