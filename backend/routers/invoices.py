@@ -79,31 +79,58 @@ async def upload_invoice(file: UploadFile = File(...)):
             if not xml_entries:
                 raise HTTPException(status_code=400, detail="OFD 中未找到 XML 文件")
 
-            preferred = [
-                name for name in xml_entries
-                if "document" in name.lower() or "invoice" in name.lower()
-            ]
-            chosen = preferred[0] if preferred else xml_entries[0]
+            # 优先包含 invoice/content/发票 的 XML，其次 document
+            def score_ofd_xml(n: str) -> tuple:
+                low = n.lower()
+                s = 0
+                if "invoice" in low or "content" in low or "发票" in n:
+                    s += 100
+                elif "document" in low:
+                    s += 50
+                if "page" in low or "pages" in low:
+                    s -= 30  # 版式页面 XML 通常无业务明细
+                return (s, -len(n))  # 高分优先
 
-            try:
-                xml_bytes = zf.read(chosen)
-            except Exception as e:
-                raise HTTPException(status_code=400, detail=f"OFD 读取失败：{e}")
+            xml_entries.sort(key=score_ofd_xml, reverse=True)
+            chosen = xml_entries[0]
 
-            with tempfile.NamedTemporaryFile(suffix=".xml", delete=False) as tmp:
-                tmp.write(xml_bytes)
-                tmp_path = tmp.name
+            invoice = None
+            for candidate in xml_entries:
+                tmp_path = None
+                try:
+                    xml_bytes = zf.read(candidate)
+                    with tempfile.NamedTemporaryFile(suffix=".xml", delete=False) as tmp:
+                        tmp.write(xml_bytes)
+                        tmp_path = tmp.name
+                    parser = JsonXmlInvoiceParser()
+                    inv = parser.parse(tmp_path)
+                    if inv.lines:
+                        invoice = inv
+                        break
+                except Exception:
+                    pass
+                finally:
+                    if tmp_path and os.path.exists(tmp_path):
+                        os.unlink(tmp_path)
 
-            parser = JsonXmlInvoiceParser()
-            try:
-                invoice = parser.parse(tmp_path)
-            except Exception as e:
-                raise HTTPException(status_code=400, detail=f"OFD 中 XML 解析失败：{e}")
+            if invoice is None:
+                # 最后一次尝试：用第一个文件
+                tmp_path = None
+                try:
+                    xml_bytes = zf.read(chosen)
+                    with tempfile.NamedTemporaryFile(suffix=".xml", delete=False) as tmp:
+                        tmp.write(xml_bytes)
+                        tmp_path = tmp.name
+                    parser = JsonXmlInvoiceParser()
+                    invoice = parser.parse(tmp_path)
+                except Exception as e:
+                    raise HTTPException(status_code=400, detail=f"OFD 中 XML 解析失败：{e}")
+                finally:
+                    if tmp_path and os.path.exists(tmp_path):
+                        os.unlink(tmp_path)
         finally:
             if zf is not None:
                 zf.close()
-            if tmp_path and os.path.exists(tmp_path):
-                os.unlink(tmp_path)
 
     if not invoice.lines:
         raise HTTPException(status_code=400, detail="未能从文件中提取到发票明细行")

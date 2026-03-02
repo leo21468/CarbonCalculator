@@ -648,6 +648,9 @@ class PdfInvoiceParser(BaseInvoiceParser):
             if name_col is None:
                 continue
 
+            if amount_col is None and len(header_str) >= 5:
+                amount_col = min(5, len(header_str) - 2)
+
             for row in table[1:]:
                 if row is None:
                     continue
@@ -665,12 +668,18 @@ class PdfInvoiceParser(BaseInvoiceParser):
                 if m_tax:
                     tax_name = m_tax.group(0)
 
-                amount = self._parse_number(
-                    row_str[amount_col] if amount_col is not None and amount_col < len(row_str) else ""
-                )
-                quantity = self._parse_number(
-                    row_str[qty_col] if qty_col is not None and qty_col < len(row_str) else ""
-                )
+                amount_cell = row_str[amount_col] if amount_col is not None and amount_col < len(row_str) else ""
+                qty_cell = row_str[qty_col] if qty_col is not None and qty_col < len(row_str) else ""
+                nums_amount = self._parse_numbers_from_cell(amount_cell)
+                nums_qty = self._parse_numbers_from_cell(qty_cell)
+                if len(nums_amount) > 1:
+                    amts = [n for n in nums_amount if 0.01 < n < 1e8 and abs(n - round(n, 2)) < 1e-9]
+                    amount = max(amts) if amts else nums_amount[-1]
+                elif nums_amount:
+                    amount = nums_amount[-1]
+                else:
+                    amount = self._parse_number(amount_cell)
+                quantity = nums_qty[0] if nums_qty else self._parse_number(qty_cell)
                 unit = (
                     row_str[unit_col] if unit_col is not None and unit_col < len(row_str) else None
                 ) or None
@@ -853,35 +862,59 @@ class PdfInvoiceParser(BaseInvoiceParser):
             if name_col_idx is None or not name_val:
                 continue
 
-            # 收集右侧各数值列
-            numeric_vals = []
+            # 收集右侧各数值列（每个单元格可能含多个数，如 "2 80.00" 为数量+金额）
+            numeric_cols = []
             for col in columns[name_col_idx + 1:]:
                 col = col.strip()
                 if not col:
                     continue
                 if _re_tax_rate.search(col):
                     continue  # 跳过税率列
-                v = self._parse_number(col)
-                if v is not None:
-                    numeric_vals.append(v)
+                nums = self._parse_numbers_from_cell(col)
+                if nums:
+                    numeric_cols.append(nums)
 
-            if not numeric_vals:
+            # 展平为按列位顺序的数值列表，利用空间位置：从左到右通常为 数量, 单价, 金额, 税额
+            all_nums = []
+            for nums_in_col in numeric_cols:
+                all_nums.extend(nums_in_col)
+
+            if not all_nums:
                 continue
 
-            # 中国发票列顺序：数量, 单价, 金额（不含税）, 税额
-            # 取倒数第二个数值作为金额（若有4个以上），否则取最后一个
-            if len(numeric_vals) >= 4:
-                quantity = numeric_vals[0] or None
-                unit_price = numeric_vals[-3] or None
-                amount = numeric_vals[-2]
-            elif len(numeric_vals) >= 2:
-                quantity = None
+            # 空间位置启发式：金额多为 2 位小数，数量多为整数；列顺序 数量,单价,金额,税额
+            def looks_like_amount(v: float) -> bool:
+                """金额通常有 2 位小数，且为正值"""
+                if v <= 0:
+                    return False
+                return abs(v - round(v, 2)) < 1e-9
+
+            def looks_like_quantity(v: float) -> bool:
+                """数量多为正整数或简单小数"""
+                if v <= 0:
+                    return False
+                return abs(v - round(v, 4)) < 1e-9
+
+            # 分离：优先将 2 位小数的值视为金额，整数视为数量
+            amount_candidates = [n for n in all_nums if looks_like_amount(n) and n > 1]
+            qty_candidates = [n for n in all_nums if looks_like_quantity(n) and n <= 99999]
+            # 排除税率范围（0.03, 0.06, 0.09, 0.13 等）
+            amount_candidates = [n for n in amount_candidates if n < 0.2 or n > 1]
+
+            if len(all_nums) >= 4:
+                # 标准列序：数量, 单价, 金额, 税额
+                quantity = all_nums[0] if qty_candidates and all_nums[0] in qty_candidates else (qty_candidates[0] if qty_candidates else None)
+                unit_price = all_nums[-3] if len(all_nums) >= 3 else None
+                amount = amount_candidates[-1] if amount_candidates else (all_nums[-2] if len(all_nums) >= 2 else all_nums[-1])
+            elif len(all_nums) >= 2:
+                # 取 2 位小数的为金额，否则取最后一个
+                amount = amount_candidates[-1] if amount_candidates else all_nums[-1]
+                quantity = qty_candidates[0] if qty_candidates and qty_candidates[0] != amount else None
                 unit_price = None
-                amount = numeric_vals[-2]
             else:
+                amount = all_nums[-1]
                 quantity = None
                 unit_price = None
-                amount = numeric_vals[0]
 
             if amount and amount > 0:
                 items.append(InvoiceLineItem(
@@ -1064,3 +1097,30 @@ class PdfInvoiceParser(BaseInvoiceParser):
             return float(cleaned)
         except (ValueError, TypeError):
             return None
+
+    @staticmethod
+    def _parse_numbers_from_cell(cell: str) -> List[float]:
+        """从可能混合「数量+金额」的单元格中解析出多个数值。
+
+        当 OCR 将数量与金额识别到同一列（如 "2 80.00"）时，按空白拆分，
+        返回按出现顺序的数值列表。用于空间位置判别：通常金额有 2 位小数，数量多为整数。
+        """
+        if not cell or not str(cell).strip():
+            return []
+        import re
+        cleaned = str(cell).strip()
+        if _RE_PERCENT.search(cleaned):
+            return []
+        cleaned = _RE_CURRENCY.sub("", cleaned)
+        cleaned = re.sub(r"[,，\s]+", " ", cleaned).strip()
+        parts = re.split(r"\s+", cleaned)
+        result = []
+        for p in parts:
+            p = re.sub(r"[^\d.\-]", "", p)
+            if not p:
+                continue
+            try:
+                result.append(float(p))
+            except (ValueError, TypeError):
+                pass
+        return result
