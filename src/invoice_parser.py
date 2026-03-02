@@ -540,8 +540,9 @@ class PdfInvoiceParser(BaseInvoiceParser):
         if not x_centers:
             return []
 
-        # 估计列数：目标约 5 列（发票表格常见列数），上限 10
-        n_cols = min(max(1, len(x_centers) // max(1, len(x_centers) // 5)), 10)
+        # 中国发票通常为 8 列；避免过度压缩导致名称与数值混列
+        n = len(x_centers)
+        n_cols = min(max(6, n // max(2, n // 10)), n, 12)
 
         try:
             from sklearn.cluster import KMeans
@@ -678,6 +679,9 @@ class PdfInvoiceParser(BaseInvoiceParser):
             price_col = self._find_col_index(header_str, price_keywords)
             tax_code_col = self._find_col_index(header_str, tax_code_keywords)
 
+            if name_col is None and len(header_str) >= 1:
+                name_col = 0
+
             if name_col is None:
                 continue
 
@@ -689,9 +693,14 @@ class PdfInvoiceParser(BaseInvoiceParser):
                     continue
                 row_str = [str(c).strip() if c else "" for c in row]
                 name = row_str[name_col] if name_col < len(row_str) else ""
+                if not name or name.strip() == "":
+                    for j, cell in enumerate(row_str):
+                        if j != amount_col and cell and not re.match(r'^[¥￥\d,，.\s%]+$', str(cell)):
+                            if any('\u4e00' <= c <= '\u9fff' for c in str(cell)):
+                                name = cell.strip()
+                                break
                 if not name or name in ("合计", "价税合计", "小计", ""):
                     continue
-                # 跳过包含"合计"的汇总行
                 if any(kw in name for kw in ("合计", "价税合计", "小计")):
                     continue
 
@@ -776,9 +785,9 @@ class PdfInvoiceParser(BaseInvoiceParser):
             for idx, ln in enumerate(merged_lines):
                 f.write(f"[{idx}] {ln}\n")
 
-        # Pattern 1: *类别*名称 + numbers (existing pattern)
+        # Pattern 1: *类别*名称 或 **类别**名称 + numbers
         pattern = re.compile(
-            r"(\*[^*]+\*[^\s]+)\s+"
+            r"(\*+[^*]+\*+[^\s]*)\s+"
             r"(?:(\d+(?:\.\d+)?)\s+)?"  # 数量（可选）
             r"(?:([^\d\s]+)\s+)?"       # 单位（可选）
             r"(?:(\d+(?:\.\d+)?)\s+)?"  # 单价（可选）
@@ -874,43 +883,73 @@ class PdfInvoiceParser(BaseInvoiceParser):
             for row in page_dict.get("rows", []):
                 all_rows.append(row)
 
-        _re_name_prefix = re.compile(r'\*[^*]+\*')  # *类别*名称 格式
-        _re_numeric_col = re.compile(r'^[¥￥]?\d[\d,，.]*$')  # 数值列（含货币符号）
+        _re_name_prefix = re.compile(r'\*+[^*]+\*+')  # *类别*名称 或 **类别**名称 格式
+        _re_has_chinese = re.compile(r'[\u4e00-\u9fff]{2,}')  # 至少2个汉字
+        _re_pure_number = re.compile(r'^[¥￥\d,，.\s]+$')  # 纯数字/货币
         _re_tax_rate = re.compile(r'\d+(?:\.\d+)?%')
 
         items: List[InvoiceLineItem] = []
-        for row in all_rows:
+        consumed_next = set()  # 已被「名称行+下一行」合并占用的下一行索引
+        for ri, row in enumerate(all_rows):
+            if ri in consumed_next:
+                continue
             columns = row.get("columns", [])
             if not columns:
                 continue
-            # 找到名称列（第一个含汉字且匹配 *cat*name 格式的列）
+            # 名称列：优先 *cat*name 格式，否则取第一个含汉字且非纯数字的列（避免漏掉"办公用品"等）
             name_col_idx = None
             name_val = ""
             for i, col in enumerate(columns):
-                if _re_name_prefix.search(col):
+                c = col.strip()
+                if not c:
+                    continue
+                if _re_name_prefix.search(c):
                     name_col_idx = i
-                    name_val = col.strip()
+                    name_val = c
                     break
+            if name_col_idx is None:
+                for i, col in enumerate(columns):
+                    c = col.strip()
+                    if c and _re_has_chinese.search(c) and not _re_pure_number.match(c) and not _re_tax_rate.search(c):
+                        name_col_idx = i
+                        name_val = c
+                        break
 
             if name_col_idx is None or not name_val:
                 continue
 
-            # 收集右侧各数值列（每个单元格可能含多个数，如 "2 80.00" 为数量+金额）
-            numeric_cols = []
-            for col in columns[name_col_idx + 1:]:
-                col = col.strip()
-                if not col:
-                    continue
-                if _re_tax_rate.search(col):
-                    continue  # 跳过税率列
-                nums = self._parse_numbers_from_cell(col)
-                if nums:
-                    numeric_cols.append(nums)
+            # 收集数值列（start 为名称列索引，-1 表示从第 0 列起）
+            def _gather_nums(cols: list, start: int) -> list:
+                out = []
+                subset = cols[start + 1:] if start >= 0 else cols
+                for col in subset:
+                    col = col.strip()
+                    if not col:
+                        continue
+                    nums = self._parse_numbers_from_cell(col)
+                    if nums:
+                        out.append(nums)
+                flat = []
+                for nlist in out:
+                    flat.extend(nlist)
+                return flat
 
-            # 展平为按列位顺序的数值列表。中国发票列序：项目名称、规格型号、单位、数量、单价、金额、税率/征收率、税额
-            all_nums = []
-            for nums_in_col in numeric_cols:
-                all_nums.extend(nums_in_col)
+            all_nums = _gather_nums(columns, name_col_idx)
+
+            # 名称行有内容但本行无数值：可能是名称与数值分行，尝试用下一行的数值
+            if not all_nums and ri + 1 < len(all_rows):
+                next_row = all_rows[ri + 1]
+                next_cols = next_row.get("columns", [])
+                # 下一行首列无 *XXX* 名称（避免误合并到下一个商品）
+                has_name_in_next = False
+                for c in next_cols[: min(2, len(next_cols))]:
+                    if c and _re_name_prefix.search(str(c)):
+                        has_name_in_next = True
+                        break
+                if not has_name_in_next:
+                    all_nums = _gather_nums(next_cols, -1)  # 从第 0 列开始收集
+                    if all_nums:
+                        consumed_next.add(ri + 1)
 
             if not all_nums:
                 continue
@@ -974,7 +1013,7 @@ class PdfInvoiceParser(BaseInvoiceParser):
         def is_name_only_line(line: str) -> bool:
             """True if line is a *cat*name line with no inline numbers/currency/percent."""
             s = line.strip()
-            if not re.match(r'\*[^*]+\*', s):
+            if not re.search(r'\*+[^*]+\*+', s):
                 return False
             if re.search(r'[¥￥%]', s):
                 return False
@@ -1009,8 +1048,8 @@ class PdfInvoiceParser(BaseInvoiceParser):
                     if not nxt:
                         j += 1
                         continue
-                    # 任何以 *cat* 开头的行都视为新商品块的起点，终止当前块
-                    if re.match(r'\*[^*]+\*', nxt):
+                    # 任何以 *cat* 或 **cat** 开头的行都视为新商品块的起点
+                    if re.search(r'\*+[^*]+\*+', nxt):
                         break
                     # New item block starts → end current block
                     if is_name_only_line(raw_lines[j]):
@@ -1140,8 +1179,8 @@ class PdfInvoiceParser(BaseInvoiceParser):
             return []
         import re
         cleaned = str(cell).strip()
-        if _RE_PERCENT.search(cleaned):
-            return []
+        # 含税率时只剔除百分比部分，仍解析金额等数值（避免"80.00 13%"整格被丢弃导致漏产品）
+        cleaned = _RE_PERCENT.sub("", cleaned)
         cleaned = _RE_CURRENCY.sub("", cleaned)
         cleaned = re.sub(r"[,，\s]+", " ", cleaned).strip()
         parts = re.split(r"\s+", cleaned)
