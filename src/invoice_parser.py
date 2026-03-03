@@ -649,6 +649,7 @@ class PdfInvoiceParser(BaseInvoiceParser):
         if block_items:
             return block_items
         merged_lines = []
+        _pure_num_re = re.compile(r'^[\d,，.\s]+$')
         i = 0
         while i < len(raw_lines):
             line = raw_lines[i]
@@ -667,8 +668,12 @@ class PdfInvoiceParser(BaseInvoiceParser):
                     # 另一个 *XX*YY 格式行 → 新商品，停止合并
                     if nxt.startswith("*"):
                         break
-                    # 无数字且长度≤15的中文片段 → 名称续行，继续合并
-                    if not re.search(r'\d', nxt) and len(nxt) <= 15:
+                    # 名称续行：不是纯数字/货币行、不是税率、不含新 *类别* 格式、长度≤20
+                    # 允许含数字的续行（如型号 500g、100mAh）
+                    if (not _pure_num_re.match(nxt)
+                            and not re.search(r'\d+(?:\.\d+)?%', nxt)
+                            and not nxt.startswith('*')
+                            and len(nxt) <= 20):
                         merged = merged + nxt
                         j += 1
                         continue
@@ -931,8 +936,16 @@ class PdfInvoiceParser(BaseInvoiceParser):
         bare_number_pat = re.compile(r'^\s*[\d,]+(?:\.\d+)?\s*$')
         tax_rate_pat = re.compile(r'^\s*\d+(?:\.\d+)?%\s*$')
         currency_pat = re.compile(r'^\s*[¥￥][\d,]+(?:\.\d+)?\s*$')
-        # Short Chinese continuation fragment: 1–6 Chinese chars, nothing else
-        cn_fragment_pat = re.compile(r'^\s*[\u4e00-\u9fff]{1,6}\s*$')
+        # Name continuation: not a pure number/currency/tax-rate, not a new *cat* line,
+        # at most 20 chars. Handles "500g", "100mAh", "A型", etc.
+        def is_name_continuation(s: str) -> bool:
+            return (
+                not bare_number_pat.match(s)
+                and not tax_rate_pat.match(s)
+                and not currency_pat.match(s)
+                and len(s) <= 20
+                and not re.search(r'\*+[^*]+\*+', s)
+            )
 
         def has_reasonable_decimals(v: float) -> bool:
             """True if v has at most 2 decimal places (monetary amount, not a ratio)."""
@@ -972,8 +985,8 @@ class PdfInvoiceParser(BaseInvoiceParser):
                             plain_numbers.append(v)
                         j += 1
                         continue
-                    # Short Chinese continuation → part of the item name
-                    if cn_fragment_pat.match(nxt):
+                    # Name continuation → part of the item name
+                    if is_name_continuation(nxt):
                         name_parts.append(nxt)
                         j += 1
                         continue
