@@ -5,7 +5,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from src.invoice_parser import PdfInvoiceParser, JsonXmlInvoiceParser, parse_amount_cny
+from src.invoice_parser import PdfInvoiceParser, parse_amount_cny
 
 class TestTableAmountNotUnitPrice:
     """测试表格解析时 amount 取金额列而非单价列"""
@@ -92,35 +92,6 @@ class TestTextExtractionUnitPriceNotAmount:
             assert abs(items[0].unit_price - 0.80) < 0.01, (
                 f"unit_price 应为 0.80，实际为 {items[0].unit_price}"
             )
-
-
-class TestJsonParserAmountField:
-    """测试 JsonXmlInvoiceParser 正确区分 amount 与 unit_price 字段"""
-
-    def test_json_parser_amount_field(self):
-        """从含 amount 和 unit_price 键的 dict 中，amount 和 unit_price 应各自正确"""
-        parser = JsonXmlInvoiceParser()
-        data = {
-            "invoice_number": "12345",
-            "total_amount": 500.0,
-            "lines": [
-                {
-                    "name": "电费",
-                    "amount": 500.0,
-                    "unit_price": 0.80,
-                    "quantity": 625,
-                    "unit": "度",
-                }
-            ],
-        }
-        inv = parser.from_dict(data)
-        assert len(inv.lines) == 1
-        assert abs(inv.lines[0].amount - 500.0) < 0.01, (
-            f"amount 应为 500.0，实际为 {inv.lines[0].amount}"
-        )
-        assert inv.lines[0].unit_price == 0.80, (
-            f"unit_price 应为 0.80，实际为 {inv.lines[0].unit_price}"
-        )
 
 
 class TestOcrTaxRateNotAmount:

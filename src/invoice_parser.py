@@ -1,6 +1,6 @@
 """
 第一步：数据采集 - 发票结构化提取。
-系统通过接口提取电子发票（OFD/PDF/XML）的结构化数据。
+系统通过接口提取 PDF 电子发票的结构化数据。
 核心抓取字段：货物或应税劳务名称、税收分类编码、金额/单价/数量、销方信息。
 
 碳排放计算输入字段说明
@@ -92,7 +92,7 @@ def parse_amount_cny(val: str) -> Optional[float]:
 
 
 class BaseInvoiceParser(ABC):
-    """发票解析器抽象基类：支持 OFD / PDF / XML 等格式"""
+    """发票解析器抽象基类：支持 PDF 等格式"""
 
     @abstractmethod
     def parse(self, source: Union[str, Path, bytes]) -> Invoice:
@@ -104,7 +104,7 @@ class BaseInvoiceParser(ABC):
 
     @abstractmethod
     def supported_formats(self) -> List[str]:
-        """返回支持的格式列表，如 ['XML', 'PDF']"""
+        """返回支持的格式列表，如 ['PDF']"""
         pass
 
 
@@ -133,244 +133,26 @@ def _line_from_dict(d: dict) -> InvoiceLineItem:
     )
 
 
-class JsonXmlInvoiceParser(BaseInvoiceParser):
-    """
-    从 JSON 或类 XML 解析后的 dict 构造 Invoice。
-    用于对接「通过 API 解析电子发票文件（XML 或 JSON）获取后台结构化数据」。
-    """
-
-    def supported_formats(self) -> List[str]:
-        return ["JSON", "XML"]
-
-    def parse(self, source: Union[str, Path, bytes]) -> Invoice:
-        import json
-        if isinstance(source, (str, Path)):
-            path = Path(source)
-            try:
-                if path.suffix.lower() == ".json":
-                    raw = json.loads(path.read_text(encoding="utf-8"))
-                else:
-                    # 若为 XML，可在此用 lxml 解析为 dict，这里简化为期望已是 dict 形态
-                    text = path.read_text(encoding="utf-8")
-                    raw = self._xml_to_dict(text) if ".xml" in path.suffix.lower() else json.loads(text)
-            except (FileNotFoundError, UnicodeDecodeError) as e:
-                raise ValueError(f"Cannot read invoice file: {e}")
-            except json.JSONDecodeError as e:
-                raise ValueError(f"Invalid JSON format: {e}")
-        else:
-            try:
-                raw = json.loads(source.decode("utf-8"))
-            except (json.JSONDecodeError, UnicodeDecodeError) as e:
-                raise ValueError(f"Invalid source data: {e}")
-
-        return self._build_invoice(raw)
-
-    def _xml_to_dict(self, xml_text: str) -> dict:
-        """解析 XML 为 _build_invoice 期望的 dict 结构（含 lines、invoice_number 等）。"""
-        try:
-            import xml.etree.ElementTree as ET
-            root = ET.fromstring(xml_text)
-            return self._xml_to_invoice_dict(root)
-        except ET.ParseError:
-            return {}
-
-    def _xml_to_invoice_dict(self, root) -> dict:
-        """从 XML 根节点提取发票字段，映射为 {lines, invoice_number, seller, ...}"""
-        # 去除可能的命名空间前缀，便于匹配
-        def tag(el):
-            return el.tag.split("}")[-1] if el.tag and "}" in el.tag else (el.tag or "")
-
-        def text(el, default: str = ""):
-            return (el.text or "").strip() if el is not None else default
-
-        def find_text(parent, *names):
-            if parent is None:
-                return None
-            names_set = {n for n in names}
-            for child in parent:
-                if tag(child) in names_set:
-                    t = text(child)
-                    if t:
-                        return t
-            return None
-
-        def find_text_excluding(parent, accept: tuple, exclude: tuple):
-            """查找文本，接受 accept 中的标签，排除 exclude（如税额 se）"""
-            if parent is None:
-                return None
-            ex_set = {str(x) for x in exclude}
-            acc_set = {str(x) for x in accept}
-            for child in parent:
-                if tag(child) in ex_set:
-                    continue
-                if tag(child) in acc_set:
-                    t = text(child)
-                    if t:
-                        return t
-            return None
-
-        def find_text_recursive(node, *names):
-            """递归查找首个匹配的叶子文本（用于嵌套结构如 REQUEST/BODY/Invoice）"""
-            if node is None:
-                return None
-            names_set = {n for n in names}
-            if tag(node) in names_set:
-                t = text(node)
-                if t:
-                    return t
-            for child in node:
-                v = find_text_recursive(child, *names)
-                if v:
-                    return v
-            return None
-
-        # 递归收集所有 19 位税收编码
-        def collect_tax_codes(node, acc: list):
-            if node is None:
-                return
-            t = text(node) if hasattr(node, "text") else ""
-            if t and len(t.replace(" ", "")) == 19 and t.replace(" ", "").isdigit():
-                acc.append(t.replace(" ", ""))
-            for child in node:
-                collect_tax_codes(child, acc)
-
-        tax_codes = []
-        collect_tax_codes(root, tax_codes)
-
-        detail_paths = [
-            "EInvoiceData", "eInvoiceData", "FPDetail", "FPMX", "FPDMX", "fpDetail", "fpmx", "fpdmx",
-            "Detail", "Details", "Items", "items", "Goods", "goods", "COMMON_FPKJ_XMXXS", "COMMON_FPKJ_XMXX",
-            "FPMXXX", "fpmxxx", "HXMX", "hxmx", "XMX", "xmx", "MXXX", "mxxx",
-        ]
-        row_tags = ["IssuItemInformation", "issuItemInformation", "Item", "item", "Row", "row", "COMMON_FPKJ_XMXX"]
-
-        # 递归查找明细容器节点
-        def find_container(node, paths_set):
-            if node is None:
-                return None
-            if tag(node) in paths_set:
-                return node
-            for child in node:
-                found = find_container(child, paths_set)
-                if found:
-                    return found
-            return None
-
-        paths_set = set(detail_paths)
-        items_container = find_container(root, paths_set)
-
-        def collect_row_like_nodes(node, acc: list):
-            """递归收集形如明细行的节点（含金额且含名称或数量，排除税额）"""
-            if node is None:
-                return
-            name_ok = find_text(node, "name", "Name", "hwmc", "XMMC", "xmmc", "spmc", "项目名称")
-            amount_ok = find_text_excluding(node, ("amount", "je", "JE", "XMJE", "xmje", "金额"), ("se", "SE", "税额"))
-            qty_ok = find_text(node, "quantity", "sl", "XMSL", "xmsl", "数量")
-            if amount_ok and (name_ok or qty_ok):
-                acc.append(node)
-            for child in node:
-                collect_row_like_nodes(child, acc)
-
-        lines = []
-        if items_container is not None:
-            candidates = []
-            for child in items_container:
-                if tag(child) in row_tags:
-                    candidates.append(child)
-                elif tag(child) in ("Item", "COMMON_FPKJ_XMXX"):
-                    candidates.append(child)
-            if not candidates:
-                for child in items_container:
-                    for sub in child:
-                        if tag(sub) in row_tags:
-                            candidates.append(sub)
-            if not candidates:
-                collect_row_like_nodes(root, candidates)
-            for idx, row in enumerate(candidates):
-                name = find_text(row, "name", "Name", "ItemName", "itemName", "hwmc", "HWMC", "goodsName", "spmc", "SPMC", "XMMC", "xmmc", "项目名称")
-                tax_code = find_text(row, "taxCode", "TaxCode", "TaxClassificationCode", "taxClassificationCode", "spbm", "SPBM", "ssbm", "ssflbm", "税收分类编码")
-                if not tax_code and idx < len(tax_codes):
-                    tax_code = tax_codes[idx]
-                if tax_code and (len(tax_code) != 19 or not tax_code.isdigit()):
-                    tax_code = "".join(c for c in tax_code if c.isdigit())
-                    tax_code = tax_code if len(tax_code) == 19 else None
-                amount_s = find_text_excluding(
-                    row,
-                    ("amount", "Amount", "je", "JE", "XMJE", "xmje", "金额", "hj", "HJ"),
-                    ("se", "SE", "ComTaxAm", "comTaxAm", "税额"),  # 排除税额
-                )
-                amount = float(amount_s) if amount_s else 0.0
-                quantity_s = find_text(row, "quantity", "Quantity", "Quantity", "sl", "SL", "XMSL", "xmsl", "数量")
-                quantity = float(quantity_s) if quantity_s else None
-                unit = find_text(row, "unit", "Unit", "MeaUnits", "meaUnits", "dw", "DW", "单位")
-                price_s = find_text(row, "price", "Price", "UnPrice", "unPrice", "dj", "DJ", "XMDJ", "xmdj", "单价")
-                unit_price = float(price_s) if price_s else None
-                lines.append({
-                    "name": name or "",
-                    "amount": amount,
-                    "tax_classification_code": tax_code,
-                    "quantity": quantity,
-                    "unit": unit,
-                    "unit_price": unit_price,
-                })
-
-        total_amount = 0.0
-        total_s = find_text_recursive(root, "totalAmount", "TotalAmount", "TotalAmWithoutTax", "totalAmWithoutTax", "TotalTax-includedAmount", "hjje", "HJJE", "价税合计", "合计金额")
-        if total_s:
-            try:
-                total_amount = float(total_s)
-            except ValueError:
-                pass
-        if not total_amount and lines:
-            total_amount = sum(line.get("amount", 0) or 0 for line in lines)
-
-        invoice_number = find_text_recursive(root, "invoiceNumber", "InvoiceNumber", "EIid", "eiid", "fpdm", "FPDM", "invoiceNo", "发票代码", "发票号码")
-        invoice_date = find_text_recursive(root, "invoiceDate", "IssueTime", "issueTime", "kprq", "KPRQ", "date", "开票日期")
-        seller_name = find_text_recursive(root, "sellerName", "SellerName", "sellerName", "xfmc", "XFMC", "销方名称", "销售方")
-        buyer_name = find_text_recursive(root, "buyerName", "BuyerName", "buyerName", "gfmc", "GFMC", "购方名称", "购买方")
-
-        return {
-            "invoice_number": invoice_number,
-            "date": invoice_date,
-            "total_amount": total_amount,
-            "lines": lines,
-            "seller": {"name": seller_name} if seller_name else None,
-            "buyer": {"name": buyer_name} if buyer_name else None,
-        }
-
-    def _element_to_dict(self, el) -> dict:
-        """将 XML 节点转为 dict（兼容旧逻辑，现由 _xml_to_invoice_dict 主导）"""
-        d = {}
-        for child in el:
-            if len(child) == 0:
-                d[child.tag] = child.text or ""
-            else:
-                d[child.tag] = self._element_to_dict(child)
-        return d
-
-    def from_dict(self, data: dict) -> Invoice:
-        """直接从 API 返回的 dict 构建 Invoice（推荐：接口解析后调用此方法）"""
-        return self._build_invoice(data)
-
-    def _build_invoice(self, data: dict) -> Invoice:
-        inv = Invoice(
-            invoice_code=data.get("invoice_code"),
-            invoice_number=data.get("invoice_number"),
-            date=data.get("date"),
-            total_amount=float(data.get("total_amount", 0)),
-            source_format=data.get("source_format"),
+def _build_invoice_from_dict(data: dict) -> Invoice:
+    """从 API 返回的 dict 构建 Invoice。"""
+    inv = Invoice(
+        invoice_code=data.get("invoice_code"),
+        invoice_number=data.get("invoice_number"),
+        date=data.get("date"),
+        total_amount=float(data.get("total_amount", 0)),
+        source_format=data.get("source_format"),
+    )
+    if data.get("seller"):
+        inv.seller = _seller_from_dict(
+            data["seller"] if isinstance(data["seller"], dict) else {"name": str(data["seller"])}
         )
-        if data.get("seller"):
-            inv.seller = _seller_from_dict(
-                data["seller"] if isinstance(data["seller"], dict) else {"name": str(data["seller"])}
-            )
-        if data.get("buyer"):
-            inv.buyer = _seller_from_dict(
-                data["buyer"] if isinstance(data["buyer"], dict) else {"name": str(data["buyer"])}
-            )
-        for item in data.get("lines", data.get("items", [])):
-            inv.lines.append(_line_from_dict(item if isinstance(item, dict) else {"name": str(item), "amount": 0}))
-        return inv
+    if data.get("buyer"):
+        inv.buyer = _seller_from_dict(
+            data["buyer"] if isinstance(data["buyer"], dict) else {"name": str(data["buyer"])}
+        )
+    for item in data.get("lines", data.get("items", [])):
+        inv.lines.append(_line_from_dict(item if isinstance(item, dict) else {"name": str(item), "amount": 0}))
+    return inv
 
 
 class PdfInvoiceParser(BaseInvoiceParser):
@@ -393,7 +175,6 @@ class PdfInvoiceParser(BaseInvoiceParser):
         - 单元测试之间需要隔离状态
         """
         PdfInvoiceParser._ocr_instance = None
-        PdfInvoiceParser._ppstructure_instance = None
 
     def parse(self, source: Union[str, Path, bytes]) -> Invoice:
         import io
@@ -411,111 +192,6 @@ class PdfInvoiceParser(BaseInvoiceParser):
             return self._extract_invoice(pdf)
         finally:
             pdf.close()
-
-    def _ocr_pdf_ppstructure(self, pdf) -> tuple[List[list], str, list]:
-        """使用百度 PP-Structure（版面分析+表格识别）处理图片型 PDF。
-
-        返回 (all_tables, all_text, ocr_structured)：
-        - all_tables: 每页表格的列表 [[row,...], ...]，可直接用于 _extract_lines_from_tables
-        - all_text: 拼接的全文（含 Text 区域 OCR 结果）
-        - ocr_structured: 与 _ocr_pdf 相同的页列表，供 _extract_lines_from_ocr_structured 兜底
-        """
-        try:
-            from paddleocr import PPStructure
-        except ImportError:
-            raise ImportError("PP-Structure 需要 paddleocr：pip install paddleocr")
-
-        if not hasattr(PdfInvoiceParser, '_ppstructure_instance') or PdfInvoiceParser._ppstructure_instance is None:
-            PdfInvoiceParser._ppstructure_instance = PPStructure(
-                show_log=False, table=True, layout=True, ocr=True
-            )
-        engine = PdfInvoiceParser._ppstructure_instance
-
-        import numpy as np
-        try:
-            import cv2
-        except ImportError:
-            cv2 = None
-
-        all_tables: List[list] = []
-        all_text_parts: List[str] = []
-        all_page_ocr: list = []  # 兼容 _extract_lines_from_ocr_structured 的格式
-
-        for page_idx, page in enumerate(pdf.pages):
-            img_pil = page.to_image(resolution=150).original
-            img_np = np.array(img_pil)
-            if cv2 is not None and len(img_np.shape) == 3 and img_np.shape[2] == 3:
-                img_np = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
-            try:
-                result = engine(img_np)
-            except Exception:
-                result = []
-            if not result:
-                all_text_parts.append("")
-                all_page_ocr.append({"page": page_idx + 1, "rows": [], "full_text": ""})
-                continue
-
-            page_texts = []
-            page_rows_for_ocr = []
-            for region in result:
-                rtype = region.get("type", "")
-                res = region.get("res")
-                if rtype == "table" and res and isinstance(res, dict):
-                    html = res.get("html")
-                    if html:
-                        tbl = self._parse_ppstructure_table_html(html)
-                        if tbl and len(tbl) >= 2:
-                            all_tables.append(tbl)
-                elif rtype == "text" and res:
-                    rec_res = res[1] if isinstance(res, (list, tuple)) and len(res) >= 2 else res
-                    for item in (rec_res if isinstance(rec_res, (list, tuple)) else [rec_res]):
-                        t = item[0] if isinstance(item, (list, tuple)) else str(item)
-                        page_texts.append(t)
-                        page_rows_for_ocr.append({"columns": [t], "y_center": 0})
-            text_line = " ".join(page_texts)
-            all_text_parts.append(text_line)
-            if page_rows_for_ocr:
-                all_page_ocr.append({
-                    "page": page_idx + 1,
-                    "rows": page_rows_for_ocr,
-                    "full_text": text_line,
-                })
-            else:
-                all_page_ocr.append({"page": page_idx + 1, "rows": [], "full_text": text_line})
-
-        all_text = "\n".join(all_text_parts)
-        return all_tables, all_text, all_page_ocr
-
-    def _parse_ppstructure_table_html(self, html: str) -> Optional[list]:
-        """将 PP-Structure 表格 HTML 解析为 [[cell,...], ...] 行列表"""
-        if not html or not html.strip():
-            return None
-        try:
-            import pandas as pd
-            dfs = pd.read_html(html)
-        except Exception:
-            return None
-        if not dfs:
-            return None
-        df = dfs[0]
-        rows = []
-        for _, r in df.iterrows():
-            row = []
-            for v in r.tolist():
-                if v is None or (isinstance(v, float) and (v != v or v == float("inf"))):
-                    row.append("")
-                else:
-                    row.append(str(v).strip())
-            rows.append(row)
-        if not rows:
-            header = [str(c).strip() for c in df.columns.tolist()]
-            if header:
-                rows = [header]
-        else:
-            header = [str(c).strip() for c in df.columns.tolist()]
-            if header and (not rows or [str(x) for x in rows[0]] != header):
-                rows.insert(0, header)
-        return rows if rows else None
 
     def _ocr_pdf(self, pdf) -> tuple[str, list]:
         """使用 PaddleOCR 对 PDF 各页图片进行 OCR，返回 (拼接文本, 结构化页列表) 元组"""
@@ -704,28 +380,12 @@ class PdfInvoiceParser(BaseInvoiceParser):
 
         ocr_structured = []
 
-        # 新优先级（从高到低）：
-        # 1. PaddleOCR（最高精度，始终首选）
-        # 2. PP-Structure（仅当 PaddleOCR 不可用时）
-        # 3. pdfplumber 原生文本（最低优先级/兜底，已在上方采集）
-        def _try_ppstructure():
-            try:
-                nonlocal all_text, all_tables, ocr_structured
-                pp_tables_tmp, pp_text_tmp, ocr_structured = self._ocr_pdf_ppstructure(pdf)
-                if pp_text_tmp.strip():
-                    all_text = pp_text_tmp
-                if pp_tables_tmp:
-                    all_tables = pp_tables_tmp
-            except Exception:
-                pass
-
         try:
             ocr_text, ocr_structured = self._ocr_pdf(pdf)
             if ocr_text.strip():
                 all_text = ocr_text
         except Exception:
-            # PaddleOCR 未安装（ImportError）或运行异常 → 降级到 PP-Structure
-            _try_ppstructure()
+            pass
 
         inv = Invoice(source_format="PDF")
 

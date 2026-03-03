@@ -10,7 +10,7 @@ from .models import (
     EmissionResult,
     Invoice,
 )
-from .invoice_parser import JsonXmlInvoiceParser
+from .invoice_parser import _build_invoice_from_dict
 from .classifier import InvoiceScopeClassifier
 from .emission_calculator import EmissionCalculator
 from .carbon_ledger import (
@@ -56,7 +56,6 @@ class CarbonAccountingPipeline:
 
     def __init__(self, config: Optional[AppConfig] = None):
         self.config = config or AppConfig()
-        self.parser = JsonXmlInvoiceParser()
         self.classifier = InvoiceScopeClassifier(
             ref_table_path=self.config.scope_mapping.ref_table_path,
             ref_db_path=self.config.scope_mapping.ref_db_path,
@@ -93,7 +92,7 @@ class CarbonAccountingPipeline:
         ref_invoice_id: Optional[str] = None,
     ) -> dict:
         """从 API 返回的 dict 解析发票并处理"""
-        invoice = self.parser.from_dict(data)
+        invoice = _build_invoice_from_dict(data)
         return self.process_invoice(invoice, ref_invoice_id=ref_invoice_id)
 
     def build_statement(
