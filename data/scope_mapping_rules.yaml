@@ -61,7 +61,33 @@ rules:
   - scope: Scope 3
     name: 电池及电子元件
     tax_code_prefixes: []
-    keywords: ["锂电池", "蓄电池", "电池组", "电子元件", "电子器件", "半导体", "集成电路"]
+    keywords: ["锂电池", "蓄电池", "电池组", "电子元件", "电子器件", "半导体", "集成电路",
+               "杜邦线", "DC转换头", "连接器", "模块"]
+    emission_factor_id: scope3_default
+    exclude_keywords: []
+
+  # ---------- Scope 3：金属零件及机械部件 ----------
+  - scope: Scope 3
+    name: 金属零件及机械部件
+    tax_code_prefixes: []
+    keywords: ["轴承", "角码", "螺丝", "螺母", "螺栓", "固定环", "铝合金", "金属制品",
+               "五金", "零件", "部件", "紧固件"]
+    emission_factor_id: scope3_default
+    exclude_keywords: []
+
+  # ---------- Scope 3：化工品 ----------
+  - scope: Scope 3
+    name: 化工品及粘合剂
+    tax_code_prefixes: []
+    keywords: ["502强力胶", "强力胶", "胶水", "粘合剂", "化工品", "化学品"]
+    emission_factor_id: scope3_default
+    exclude_keywords: []
+
+  # ---------- Scope 3：玩具及套件 ----------
+  - scope: Scope 3
+    name: 玩具及零件套件
+    tax_code_prefixes: []
+    keywords: ["乐高", "积木", "玩具", "套件", "套组"]
     emission_factor_id: scope3_default
     exclude_keywords: []
 
@@ -77,7 +103,8 @@ rules:
   - scope: Scope 3
     name: 服务劳务
     tax_code_prefixes: ["300", "301", "302", "303"]
-    keywords: ["服务", "劳务", "运输", "物流", "快递", "咨询", "IT", "电信", "顺丰", "EMS"]
+    keywords: ["服务", "劳务", "运输", "物流", "快递", "咨询", "IT", "电信", "顺丰", "EMS",
+               "运费", "快递费", "邮费", "打包费", "配送费"]
     emission_factor_id: scope3_service
     exclude_keywords: []
 

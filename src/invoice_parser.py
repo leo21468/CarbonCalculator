@@ -462,8 +462,9 @@ class PdfInvoiceParser(BaseInvoiceParser):
         # 从表格中提取明细行（优先）
         inv.lines = self._extract_lines_from_tables(all_tables, all_text)
 
-        # 若表格解析未得到明细行，使用 OCR 结构化输出
-        if not inv.lines:
+        # 若表格解析未得到有效明细行（空或所有金额均为0），回退到文本/OCR提取
+        if not inv.lines or all(l.amount <= 0 for l in inv.lines):
+            inv.lines = []  # 清空无效行，避免遮蔽后续回退路径
             if ocr_structured:
                 inv.lines = self._extract_lines_from_ocr_structured(ocr_structured)
             if not inv.lines:
@@ -528,7 +529,11 @@ class PdfInvoiceParser(BaseInvoiceParser):
             tax_code_col = self._find_col_index(header_str, tax_code_keywords)
 
             if name_col is None and len(header_str) >= 1:
-                name_col = 0
+                # 若第0列表头为纯数字（行号列），优先用第1列作为名称列
+                if re.match(r'^\d+$', header_str[0].strip()) and len(header_str) >= 2:
+                    name_col = 1
+                else:
+                    name_col = 0
 
             if name_col is None:
                 continue
@@ -583,7 +588,7 @@ class PdfInvoiceParser(BaseInvoiceParser):
                                 break
                 if not name or name in ("合计", "价税合计", "小计", ""):
                     continue
-                if any(kw in name for kw in ("合计", "价税合计", "小计")):
+                if any(kw in name for kw in ("合计", "价税合计", "小计", "项目名称")):
                     continue
 
                 # 提取税收分类名称（如 *成品油*汽油）
@@ -689,15 +694,22 @@ class PdfInvoiceParser(BaseInvoiceParser):
         processed_text = "\n".join(merged_lines)
 
         # Pattern 1: *类别*名称 或 **类别**名称 + numbers
+        # 使用前瞻断言确保名称行后续有数字（避免纯文本行误匹配），
+        # 不强制要求中间部分格式——兼容规格编码含字母数字混合的情况（如 M3、SCSAW4、8#-32*1/2）
+        # [^*\n]+ 限制类别名不跨行，避免规格中的 * 字符（如 8#-32*1/2）被误认为类别分隔符
         pattern = re.compile(
-            r"(\*+[^*]+\*+[^\s]*)\s+"
-            r"(?:(\d+(?:\.\d+)?)\s+)?"  # 数量（可选）
-            r"(?:([^\d\s]+)\s+)?"       # 单位（可选）
-            r"(?:(\d+(?:\.\d+)?)\s+)?"  # 单价（可选）
-            r"(\d+(?:\.\d+)?)"          # 金额
+            r"(\*+[^*\n]+\*+[^\s]*)(?=[^\n]*\d)"  # name + 前瞻：同行有数字
         )
         for m in pattern.finditer(processed_text):
             name = m.group(1).strip()
+            # 跳过类别不符合标准税收分类格式的情况（真实税收分类仅含汉字/字母/空格，无数字、斜杠等特殊字符）
+            # 例如 *22*、*外径25*、*12吨*、*1/2* 均来自产品规格而非商品名
+            # 长度约束：2-15 个字符（真实税收分类通常 2-8 个汉字）
+            m_cat = re.search(r'\*([^*]+)\*', name)
+            if m_cat:
+                cat = m_cat.group(1).strip()
+                if not re.match(r'^[a-zA-Z\u4e00-\u9fff\s]{2,15}$', cat):
+                    continue
             # 提取本行名称之后的所有数字，按位置取值
             name_end = m.start(1) + len(m.group(1))
             eol = processed_text.find('\n', name_end)
@@ -712,11 +724,18 @@ class PdfInvoiceParser(BaseInvoiceParser):
                 quantity = self._parse_number(all_nums[0])
                 unit_price = self._parse_number(all_nums[-3])
                 amount = self._parse_number(all_nums[-2]) or 0.0
+            elif len(all_nums) >= 2:
+                # 两个数字时：取倒数第二个为金额（最后一个可能是税额）
+                amount = self._parse_number(all_nums[-2]) or 0.0
+                quantity = None
+                unit_price = None
+            elif len(all_nums) == 1:
+                amount = self._parse_number(all_nums[0]) or 0.0
+                quantity = None
+                unit_price = None
             else:
-                quantity = self._parse_number(m.group(2)) if m.group(2) else None
-                unit_price = self._parse_number(m.group(4)) if m.group(4) else None
-                amount = self._parse_number(m.group(5)) or 0.0
-            unit = m.group(3).strip() if m.group(3) else None
+                continue  # 无数字则跳过
+            unit = None
             lines.append(InvoiceLineItem(
                 name=name,
                 tax_classification_name=name,
