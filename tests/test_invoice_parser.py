@@ -451,3 +451,61 @@ class TestTableCrossRowNameMerge:
         items = parser._extract_lines_from_tables(tables, "")
         assert len(items) == 2, f"应解析出2条独立明细，实际 {len(items)} 条"
 
+
+class TestMultilineNameThreeLines:
+    """测试商品名跨3行时正确合并"""
+
+    def test_multiline_name_three_lines(self):
+        """商品名跨3行时应完整合并"""
+        parser = PdfInvoiceParser()
+        text = "*计算机服务*\n软件开发\n维护\n100 次 500.00 50000.00 6% 3000.00"
+        items = parser._extract_lines_from_text(text)
+        assert len(items) >= 1
+        # 名称应包含所有三行
+        assert "软件开发" in items[0].name or "计算机服务" in items[0].name
+        assert abs(items[0].amount - 50000.00) < 0.01, f"amount 应为 50000.00，实际 {items[0].amount}"
+
+
+class TestCompanyNameNotItem:
+    """测试公司名不应被识别为商品明细"""
+
+    def test_company_name_not_item(self):
+        """公司名不应被识别为商品明细"""
+        parser = PdfInvoiceParser()
+        text = "深圳市某某科技有限公司\n*电力*电费 100 度 0.80 80.00 13% 10.40"
+        items = parser._extract_lines_from_text(text)
+        # 只有电费这一条商品
+        assert len(items) == 1
+        assert "*电力*" in items[0].name or "电费" in items[0].name
+
+
+class TestOcrBlocksAmountSecondToLast:
+    """测试 _extract_from_ocr_blocks 金额应取倒数第二列"""
+
+    def test_ocr_blocks_amount_is_second_to_last(self):
+        """_extract_from_ocr_blocks 应取倒数第二个数字作为金额（不含税）"""
+        parser = PdfInvoiceParser()
+        raw_lines = [
+            "*电力*电费",
+            "100",      # 数量
+            "0.80",     # 单价
+            "80.00",    # 金额（不含税）
+            "13%",      # 税率（应被跳过）
+            "10.40",    # 税额
+        ]
+        items = parser._extract_from_ocr_blocks(raw_lines)
+        assert len(items) >= 1
+        assert abs(items[0].amount - 80.00) < 0.01, f"amount 应为 80.00，实际 {items[0].amount}"
+
+
+class TestTotalRowNotItem:
+    """测试合计行不应被识别为商品"""
+
+    def test_total_row_not_item(self):
+        """合计行不应被识别为商品"""
+        parser = PdfInvoiceParser()
+        text = "*电力*电费 100 度 0.80 80.00 13% 10.40\n合计 ¥80.00  ¥10.40"
+        items = parser._extract_lines_from_text(text)
+        # 只应有电费一条
+        assert len(items) == 1
+

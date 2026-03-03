@@ -29,6 +29,16 @@ _RE_CURRENCY = re.compile(r'[¥￥]')            # 人民币货币符号
 _RE_RMBORЦNY = re.compile(r'\b(RMB|CNY)\b', re.IGNORECASE)  # 货币名称缩写
 _RE_TAX_RATE_COL = re.compile(r'\d+(?:\.\d+)?%')  # 发票行中的税率列值
 
+# 发票非商品行关键词：这些行不应被识别为商品明细
+_INVOICE_NON_ITEM_KEYWORDS = (
+    "合计", "价税合计", "小计",
+    "购买方", "销售方", "购方", "销方",
+    "发票号码", "发票代码", "开票日期", "开票人",
+    "国家税务总局", "监制", "防伪税控",
+    "税率", "单价", "数量", "规格型号", "单位",  # 表头
+    "备注", "收款人", "复核",
+)
+
 from .models import Invoice, InvoiceLineItem, SellerInfo
 
 
@@ -207,122 +217,117 @@ class PdfInvoiceParser(BaseInvoiceParser):
         ocr = PdfInvoiceParser._ocr_instance
 
         import numpy as np
-        all_page_results = []
-        for page in pdf.pages:
+        structured = []
+        for page_idx, page in enumerate(pdf.pages):
             img = page.to_image(resolution=150).original  # PIL Image
             result = ocr.ocr(np.array(img), cls=True)
             if result and result[0]:
-                all_page_results.append(result[0])
+                rows = self._structure_postprocess(result[0])
+            else:
+                rows = []
+            full_text = "\n".join(row["text"] for row in rows)
+            structured.append({"page": page_idx + 1, "rows": rows, "full_text": full_text})
 
-        structured = self._structure_postprocess(all_page_results)
         ocr_text = "\n".join(page["full_text"] for page in structured)
         return ocr_text, structured
 
-    def _structure_postprocess(self, all_page_results: list) -> list:
-        """对 PaddleOCR 识别结果进行结构化后处理，降低列串位。
+    def _structure_postprocess(self, page_items: list) -> list:
+        """对单页 PaddleOCR 识别结果进行结构化后处理，降低列串位。
 
         参数:
-            all_page_results: 每页 OCR 结果的列表（每元素为 PaddleOCR 单页结果列表）。
+            page_items: 单页 OCR 结果列表，每元素为 [bbox, (text, score)]，
+                        其中 bbox 为 4 点坐标列表 [[x0,y0],[x1,y0],[x1,y1],[x0,y1]]。
 
         返回:
-            list of dict，每个元素描述一页：
+            list of dict，每个元素描述一行：
             {
-                "page": int,
-                "rows": [{"y_center": float, "words": [...], "columns": [...]}],
-                "full_text": str,
+                "text": str,                          # 行内所有词块以空格拼接
+                "y_center": float,
+                "words": [{"text": ..., "x_center": ..., ...}],
+                "columns": [str, ...],                # 按列对齐的文本列表
             }
         """
         import statistics
 
-        pages_output = []
+        if not page_items:
+            return []
 
-        for page_idx, page_items in enumerate(all_page_results):
-            if not page_items:
-                pages_output.append({"page": page_idx + 1, "rows": [], "full_text": ""})
-                continue
-
-            # ── 1. 从 bbox 计算每个词块的中心坐标 ──────────────────────────
-            words = []
-            for item in page_items:
-                bbox = item[0]   # 4 点坐标：[[x0,y0],[x1,y0],[x1,y1],[x0,y1]]
-                text = item[1][0]
-                score = item[1][1] if len(item[1]) > 1 else 1.0
-                xs = [pt[0] for pt in bbox]
-                ys = [pt[1] for pt in bbox]
-                x0, x1 = min(xs), max(xs)
-                y0, y1 = min(ys), max(ys)
-                x_center = (x0 + x1) / 2.0
-                y_center = (y0 + y1) / 2.0
-                words.append({
-                    "text": text,
-                    "x_center": x_center,
-                    "x0": x0, "x1": x1,
-                    "y0": y0, "y1": y1,
-                    "y_center": y_center,
-                    "score": score,
-                })
-
-            # ── 2. 行归并：按 y_center 聚合，自适应阈值 ──────────────────────
-            heights = [w["y1"] - w["y0"] for w in words if w["y1"] > w["y0"]]
-            if heights:
-                median_h = statistics.median(heights)
-                row_threshold = max(median_h * 0.6, 5.0)
-            else:
-                row_threshold = 10.0
-
-            sorted_words = sorted(words, key=lambda w: w["y_center"])
-            rows: list = []
-            for word in sorted_words:
-                placed = False
-                for row in rows:
-                    if abs(word["y_center"] - row["y_center"]) <= row_threshold:
-                        row["words"].append(word)
-                        # 更新行的 y_center 为均值
-                        row["y_center"] = sum(w["y_center"] for w in row["words"]) / len(row["words"])
-                        placed = True
-                        break
-                if not placed:
-                    rows.append({"y_center": word["y_center"], "words": [word]})
-
-            # 行内按 x 升序排列
-            for row in rows:
-                row["words"].sort(key=lambda w: w["x_center"])
-
-            # ── 3. 列识别：对所有词块 x_center 做 1-D 聚类 ────────────────────
-            all_x = [w["x_center"] for w in words]
-            if all_x:
-                col_centers = self._cluster_columns(all_x)
-            else:
-                col_centers = []
-
-            # 为每个 row 生成按列对齐的列文本列表
-            if col_centers:
-                num_cols = len(col_centers)
-                for row in rows:
-                    col_texts = [""] * num_cols
-                    for word in row["words"]:
-                        # 找到最近的列
-                        col_idx = min(
-                            range(num_cols),
-                            key=lambda i: abs(col_centers[i] - word["x_center"]),
-                        )
-                        col_texts[col_idx] = (col_texts[col_idx] + " " + word["text"]).strip()
-                    row["columns"] = col_texts
-            else:
-                for row in rows:
-                    row["columns"] = [w["text"] for w in row["words"]]
-
-            # ── 4. 构建 full_text（行内以空格分隔，行间以换行分隔）────────────
-            line_texts = [" ".join(w["text"] for w in row["words"]) for row in rows]
-            full_text = "\n".join(line_texts)
-
-            pages_output.append({
-                "page": page_idx + 1,
-                "rows": rows,
-                "full_text": full_text,
+        # ── 1. 从 bbox 计算每个词块的中心坐标 ──────────────────────────
+        words = []
+        for item in page_items:
+            bbox = item[0]   # 4 点坐标：[[x0,y0],[x1,y0],[x1,y1],[x0,y1]]
+            text = item[1][0]
+            score = item[1][1] if len(item[1]) > 1 else 1.0
+            xs = [pt[0] for pt in bbox]
+            ys = [pt[1] for pt in bbox]
+            x0, x1 = min(xs), max(xs)
+            y0, y1 = min(ys), max(ys)
+            x_center = (x0 + x1) / 2.0
+            y_center = (y0 + y1) / 2.0
+            words.append({
+                "text": text,
+                "x_center": x_center,
+                "x0": x0, "x1": x1,
+                "y0": y0, "y1": y1,
+                "y_center": y_center,
+                "score": score,
             })
 
-        return pages_output
+        # ── 2. 行归并：按 y_center 聚合，自适应阈值 ──────────────────────
+        heights = [w["y1"] - w["y0"] for w in words if w["y1"] > w["y0"]]
+        if heights:
+            median_h = statistics.median(heights)
+            row_threshold = max(median_h * 0.6, 5.0)
+        else:
+            row_threshold = 10.0
+
+        sorted_words = sorted(words, key=lambda w: w["y_center"])
+        rows: list = []
+        for word in sorted_words:
+            placed = False
+            for row in rows:
+                if abs(word["y_center"] - row["y_center"]) <= row_threshold:
+                    row["words"].append(word)
+                    # 更新行的 y_center 为均值
+                    row["y_center"] = sum(w["y_center"] for w in row["words"]) / len(row["words"])
+                    placed = True
+                    break
+            if not placed:
+                rows.append({"y_center": word["y_center"], "words": [word]})
+
+        # 行内按 x 升序排列
+        for row in rows:
+            row["words"].sort(key=lambda w: w["x_center"])
+
+        # ── 3. 列识别：对所有词块 x_center 做 1-D 聚类 ────────────────────
+        all_x = [w["x_center"] for w in words]
+        if all_x:
+            col_centers = self._cluster_columns(all_x)
+        else:
+            col_centers = []
+
+        # 为每个 row 生成按列对齐的列文本列表
+        if col_centers:
+            num_cols = len(col_centers)
+            for row in rows:
+                col_texts = [""] * num_cols
+                for word in row["words"]:
+                    # 找到最近的列
+                    col_idx = min(
+                        range(num_cols),
+                        key=lambda i: abs(col_centers[i] - word["x_center"]),
+                    )
+                    col_texts[col_idx] = (col_texts[col_idx] + " " + word["text"]).strip()
+                row["columns"] = col_texts
+        else:
+            for row in rows:
+                row["columns"] = [w["text"] for w in row["words"]]
+
+        # ── 4. 为每行添加 text 字段（行内词块以空格拼接）────────────────
+        for row in rows:
+            row["text"] = " ".join(w["text"] for w in row["words"])
+
+        return rows
 
     @staticmethod
     def _cluster_columns(x_centers: list) -> list:
@@ -366,7 +371,38 @@ class PdfInvoiceParser(BaseInvoiceParser):
 
         return [sum(c) / len(c) for c in clusters]
 
-    def _extract_invoice(self, pdf) -> Invoice:
+    @staticmethod
+    def _cluster_x_centers(centers: list, n_clusters: int) -> list:
+        """对 x 坐标列表做 1-D 聚类，返回每个点的簇标签列表。
+
+        参数:
+            centers: x 坐标列表。
+            n_clusters: 目标簇数（若超过点数则自动压缩为点数）。
+
+        返回:
+            与 centers 等长的整数列表，每个元素为该点所属簇的标签（0-based）。
+            空输入返回空列表。
+        """
+        if not centers:
+            return []
+        n = len(centers)
+        k = min(n_clusters, n)
+        try:
+            from sklearn.cluster import KMeans
+            import numpy as np
+            arr = np.array(centers).reshape(-1, 1)
+            km = KMeans(n_clusters=k, random_state=0, n_init="auto")
+            km.fit(arr)
+            return list(km.labels_)
+        except Exception:
+            pass
+        # 降级：按坐标排序后等分 k 个簇，返回原始位置对应的标签
+        sorted_pairs = sorted(enumerate(centers), key=lambda x: x[1])
+        labels = [0] * n
+        chunk = n / k
+        for rank, (orig_idx, _) in enumerate(sorted_pairs):
+            labels[orig_idx] = min(int(rank / chunk), k - 1)
+        return labels
         """从 PDF 中提取发票信息"""
         import re
 
@@ -695,7 +731,10 @@ class PdfInvoiceParser(BaseInvoiceParser):
             for m in pattern2.finditer(processed_text):
                 name = m.group(1).strip()
                 # Skip summary / header lines
-                if any(kw in name for kw in ("合计", "价税合计", "小计", "名称", "单价", "数量")):
+                if any(kw in name for kw in _INVOICE_NON_ITEM_KEYWORDS):
+                    continue
+                # 额外：非 *类别* 格式时，名称不应超过 30 字（过长说明是段落文本而非商品名）
+                if len(name) > 30:
                     continue
                 # 提取本行名称之后的所有数字，按位置取值
                 name_end = m.start(1) + len(m.group(1))
@@ -776,6 +815,9 @@ class PdfInvoiceParser(BaseInvoiceParser):
                         break
 
             if name_col_idx is None or not name_val:
+                continue
+            # 过滤非商品行
+            if any(kw in name_val for kw in _INVOICE_NON_ITEM_KEYWORDS):
                 continue
 
             # 收集数值列（start 为名称列索引，-1 表示从第 0 列起）
@@ -939,17 +981,33 @@ class PdfInvoiceParser(BaseInvoiceParser):
                 # Only emit an item when block data was actually collected
                 if len(name_parts) > 1 or plain_numbers:
                     name = self._merge_ocr_name_parts(name_parts)
-                    # Amount = first plain number with ≤2 decimal places.
-                    # Chinese VAT invoices always list fields in the order:
-                    # quantity → unit_price → amount_excl_tax → tax_rate → tax_amount,
-                    # so OCR lines appear in that same order and the first reasonable
-                    # bare number is the pre-tax amount, not the smaller tax amount.
+                    # 增值税发票固定列顺序（税率行已被 tax_rate_pat 过滤）：
+                    # 数量, 单价, 金额（不含税）, 税额
+                    # → 金额取倒数第二个，单价取倒数第三个，数量取第一个
                     reasonable_nums = [v for v in plain_numbers if has_reasonable_decimals(v)]
-                    amount = reasonable_nums[0] if reasonable_nums else None
+                    if len(reasonable_nums) >= 3:
+                        # 标准格式：数量、单价、金额、税额（4个）或 单价、金额、税额（3个）
+                        quantity = reasonable_nums[0] if len(reasonable_nums) >= 4 else None
+                        unit_price = reasonable_nums[-3] if len(reasonable_nums) >= 3 else None
+                        amount = reasonable_nums[-2]  # 倒数第二 = 金额（不含税）
+                    elif len(reasonable_nums) == 2:
+                        quantity = None
+                        unit_price = None
+                        amount = reasonable_nums[-2]  # 倒数第二 = 第一个（=金额）
+                    elif len(reasonable_nums) == 1:
+                        quantity = None
+                        unit_price = None
+                        amount = reasonable_nums[0]
+                    else:
+                        quantity = None
+                        unit_price = None
+                        amount = None
                     if name and amount is not None and amount > 0:
                         items.append(InvoiceLineItem(
                             name=name,
                             tax_classification_name=name,
+                            quantity=quantity if quantity and quantity > 0 else None,
+                            unit_price=unit_price if unit_price and unit_price > 0 else None,
                             amount=amount,
                         ))
 
