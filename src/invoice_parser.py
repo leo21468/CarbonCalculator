@@ -29,6 +29,16 @@ _RE_CURRENCY = re.compile(r'[¥￥]')            # 人民币货币符号
 _RE_RMBORЦNY = re.compile(r'\b(RMB|CNY)\b', re.IGNORECASE)  # 货币名称缩写
 _RE_TAX_RATE_COL = re.compile(r'\d+(?:\.\d+)?%')  # 发票行中的税率列值
 
+# 发票非商品行关键词：这些行不应被识别为商品明细
+_INVOICE_NON_ITEM_KEYWORDS = (
+    "合计", "价税合计", "小计",
+    "购买方", "销售方", "购方", "销方",
+    "发票号码", "发票代码", "开票日期", "开票人",
+    "国家税务总局", "监制", "防伪税控",
+    "税率", "单价", "数量", "规格型号", "单位",  # 表头
+    "备注", "收款人", "复核",
+)
+
 from .models import Invoice, InvoiceLineItem, SellerInfo
 
 
@@ -695,7 +705,10 @@ class PdfInvoiceParser(BaseInvoiceParser):
             for m in pattern2.finditer(processed_text):
                 name = m.group(1).strip()
                 # Skip summary / header lines
-                if any(kw in name for kw in ("合计", "价税合计", "小计", "名称", "单价", "数量")):
+                if any(kw in name for kw in _INVOICE_NON_ITEM_KEYWORDS):
+                    continue
+                # 额外：非 *类别* 格式时，名称不应超过 30 字（过长说明是段落文本而非商品名）
+                if len(name) > 30:
                     continue
                 # 提取本行名称之后的所有数字，按位置取值
                 name_end = m.start(1) + len(m.group(1))
@@ -776,6 +789,9 @@ class PdfInvoiceParser(BaseInvoiceParser):
                         break
 
             if name_col_idx is None or not name_val:
+                continue
+            # 过滤非商品行
+            if any(kw in name_val for kw in _INVOICE_NON_ITEM_KEYWORDS):
                 continue
 
             # 收集数值列（start 为名称列索引，-1 表示从第 0 列起）
@@ -939,17 +955,33 @@ class PdfInvoiceParser(BaseInvoiceParser):
                 # Only emit an item when block data was actually collected
                 if len(name_parts) > 1 or plain_numbers:
                     name = self._merge_ocr_name_parts(name_parts)
-                    # Amount = first plain number with ≤2 decimal places.
-                    # Chinese VAT invoices always list fields in the order:
-                    # quantity → unit_price → amount_excl_tax → tax_rate → tax_amount,
-                    # so OCR lines appear in that same order and the first reasonable
-                    # bare number is the pre-tax amount, not the smaller tax amount.
+                    # 增值税发票固定列顺序（税率行已被 tax_rate_pat 过滤）：
+                    # 数量, 单价, 金额（不含税）, 税额
+                    # → 金额取倒数第二个，单价取倒数第三个，数量取第一个
                     reasonable_nums = [v for v in plain_numbers if has_reasonable_decimals(v)]
-                    amount = reasonable_nums[0] if reasonable_nums else None
+                    if len(reasonable_nums) >= 3:
+                        # 标准格式：数量、单价、金额、税额（4个）或 单价、金额、税额（3个）
+                        quantity = reasonable_nums[0] if len(reasonable_nums) >= 4 else None
+                        unit_price = reasonable_nums[-3] if len(reasonable_nums) >= 3 else None
+                        amount = reasonable_nums[-2]  # 倒数第二 = 金额（不含税）
+                    elif len(reasonable_nums) == 2:
+                        quantity = None
+                        unit_price = None
+                        amount = reasonable_nums[-2]  # 倒数第二 = 第一个（=金额）
+                    elif len(reasonable_nums) == 1:
+                        quantity = None
+                        unit_price = None
+                        amount = reasonable_nums[0]
+                    else:
+                        quantity = None
+                        unit_price = None
+                        amount = None
                     if name and amount is not None and amount > 0:
                         items.append(InvoiceLineItem(
                             name=name,
                             tax_classification_name=name,
+                            quantity=quantity if quantity and quantity > 0 else None,
+                            unit_price=unit_price if unit_price and unit_price > 0 else None,
                             amount=amount,
                         ))
 
