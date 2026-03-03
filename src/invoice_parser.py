@@ -403,6 +403,8 @@ class PdfInvoiceParser(BaseInvoiceParser):
         for rank, (orig_idx, _) in enumerate(sorted_pairs):
             labels[orig_idx] = min(int(rank / chunk), k - 1)
         return labels
+
+    def _extract_invoice(self, pdf) -> Invoice:
         """从 PDF 中提取发票信息"""
         import re
 
