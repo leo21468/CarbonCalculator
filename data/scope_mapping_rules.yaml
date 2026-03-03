@@ -57,6 +57,14 @@ rules:
     exclude_keywords: []
     note: "有m³数量时用活动数据法(0.168 kgCO2e/m³)，否则EEIO"
 
+  # ---------- Scope 3：电池及电子元件 ----------
+  - scope: Scope 3
+    name: 电池及电子元件
+    tax_code_prefixes: []
+    keywords: ["锂电池", "蓄电池", "电池组", "电子元件", "电子器件", "半导体", "集成电路"]
+    emission_factor_id: scope3_default
+    exclude_keywords: []
+
   # ---------- Scope 3：租赁默认、服务一刀切 ----------
   - scope: Scope 3
     name: 有形动产租赁
