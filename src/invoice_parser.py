@@ -35,8 +35,6 @@ _RE_DATE = re.compile(
 )
 # Issue 2: 匹配「国家税务总局」的 OCR 噪音变体（如国家报务总码、国家批务总局、国家报务总构）
 _RE_TAX_AUTHORITY = re.compile(r'国家.{0,3}[税报批][务]总[局码构]')
-# Issue 9: 匹配合计表达式「A=B+C」，此类行是汇总行而非明细行
-_RE_TOTAL_EXPR = re.compile(r'(\d+(?:\.\d+)?)\s*[=＝]\s*(\d+(?:\.\d+)?)\s*\+\s*(\d+(?:\.\d+)?)')
 # Issue 1b: 中国增值税常见税率（整数，OCR 有时丢失 '%' 符号）
 _CN_VAT_RATES = frozenset({1, 3, 5, 6, 9, 10, 11, 13, 16, 17})
 
@@ -745,17 +743,18 @@ class PdfInvoiceParser(BaseInvoiceParser):
             # 比较整数部分，避免 12.5 被误过滤（仅精确整数匹配）
             name_embedded_digits = set(re.findall(r'\d+', name))
             all_nums = [n for n in all_nums if n.split('.')[0] not in name_embedded_digits or '.' in n]
-            # Issue 9: 若行内含合计表达式 A=B+C，拆分为两个明细行
-            total_m = _RE_TOTAL_EXPR.search(line_rest)
-            if total_m:
-                for sub_amt_str in (total_m.group(2), total_m.group(3)):
-                    sub_amt = self._parse_number(sub_amt_str)
-                    if sub_amt and sub_amt > 0:
-                        lines.append(InvoiceLineItem(
-                            name=name,
-                            tax_classification_name=name,
-                            amount=sub_amt,
-                        ))
+            # Issue 9 (revised): 检验 all_nums 中是否存在「a+b=c」的合计关系
+            # 若存在，输出 a 和 b 两个明细，跳过合计值 c（不依赖 '=' '+'  等文本符号）
+            nums_f = [self._parse_number(n) for n in all_nums]
+            nums_f = [v for v in nums_f if v is not None and v > 0]
+            sub_amounts = self._detect_sum_pair(nums_f)
+            if sub_amounts:
+                for sub_amt in sub_amounts:
+                    lines.append(InvoiceLineItem(
+                        name=name,
+                        tax_classification_name=name,
+                        amount=sub_amt,
+                    ))
                 continue
             if len(all_nums) >= 4:
                 # 中国增值税发票固定列顺序：数量, 单价, 金额（不含税）, 税额
@@ -1164,6 +1163,32 @@ class PdfInvoiceParser(BaseInvoiceParser):
         return result
 
     @staticmethod
+    def _detect_sum_pair(nums: list) -> "Optional[list]":
+        """检验数字列表中是否存在「两数之和等于另一数」的合计关系。
+
+        Issue 9: 当同一行内的金额数字满足 a + b = c 时，c 是合计值，a 和 b 是明细金额。
+        返回 [a, b]（明细金额列表，不含合计 c）；若不存在此关系则返回 None。
+
+        容差 0.005 元，用于浮点精度与 OCR 取整误差。
+        算法复杂度 O(n²)：枚举所有对 (i, j)，查询其和是否在集合中。
+        """
+        n = len(nums)
+        if n < 3:
+            return None
+        # 用集合加速「和在列表中」的查找；保留原始列表以便返回真实值
+        nums_set = set(nums)
+        for i in range(n):
+            for j in range(i + 1, n):
+                candidate_total = nums[i] + nums[j]
+                # 在剩余数字中查找是否有值 ≈ candidate_total
+                for k in range(n):
+                    if k == i or k == j:
+                        continue
+                    if abs(nums[k] - candidate_total) < 0.005:
+                        return [nums[i], nums[j]]
+        return None
+
+    @staticmethod
     def _post_filter_lines(lines: "List[InvoiceLineItem]") -> "List[InvoiceLineItem]":
         """后置过滤：从解析结果中移除非商品行（合计、日期、零金额等）。"""
         result = []
@@ -1178,9 +1203,6 @@ class PdfInvoiceParser(BaseInvoiceParser):
             # Issue 2: 过滤「国家税务总局」OCR 变体（如国家报务总码、国家批务总局）
             if _RE_TAX_AUTHORITY.search(name):
                 continue
-            # Issue 9: 过滤合计表达式行（如 19.72=10.74+8.98）
-            if _RE_TOTAL_EXPR.search(name):
-                continue
             if line.amount <= 0:
                 continue
             # Issue 3: 过滤金额看起来像 8 位纯数字日期（YYYYMMDD，范围 20000101-20991231）
@@ -1191,6 +1213,26 @@ class PdfInvoiceParser(BaseInvoiceParser):
                 if 1 <= mm <= 12 and 1 <= dd <= 31:
                     continue
             result.append(line)
+
+        # Issue 9: 过滤合计行——若某行金额恰好等于另外两行金额之和，则该行为汇总行，应移除
+        # 复用 _detect_sum_pair 确定哪些索引是合计行，仅保留明细行
+        if len(result) >= 3:
+            amounts = [l.amount for l in result]
+            total_indices: set = set()
+            for k in range(len(amounts)):
+                if k in total_indices:
+                    continue
+                other = [amounts[idx] for idx in range(len(amounts)) if idx != k and idx not in total_indices]
+                # 检验 amounts[k] 是否等于 other 中某两个数之和
+                for i in range(len(other)):
+                    for j in range(i + 1, len(other)):
+                        if abs(other[i] + other[j] - amounts[k]) < 0.005:
+                            total_indices.add(k)
+                            break
+                    if k in total_indices:
+                        break
+            result = [l for idx, l in enumerate(result) if idx not in total_indices]
+
         return result
 
     def _find_declared_total_from_tables(self, tables: list) -> "Optional[float]":
