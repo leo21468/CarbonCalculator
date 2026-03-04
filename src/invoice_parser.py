@@ -28,10 +28,10 @@ _RE_PERCENT = re.compile(r'\d+(?:\.\d+)?%')   # 税率百分比（如"13%"）
 _RE_CURRENCY = re.compile(r'[¥￥]')            # 人民币货币符号
 _RE_RMBORЦNY = re.compile(r'\b(RMB|CNY)\b', re.IGNORECASE)  # 货币名称缩写
 _RE_TAX_RATE_COL = re.compile(r'\d+(?:\.\d+)?%')  # 发票行中的税率列值
-# Issue 3: 扩展日期格式，增加 YYYYMMDD 纯数字格式（如 20250403）
+# Issue 3: 扩展日期格式，增加 YYYYMMDD 纯数字格式（如 20250403，范围 2000-2099 年）
 _RE_DATE = re.compile(
     r'\d{4}(?:年\d{1,2}月\d{1,2}日?|[-/]\d{1,2}[-/]\d{1,2})'
-    r'|(?<!\d)2[0-9]{3}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])(?!\d)'
+    r'|(?<!\d)20[0-9]{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])(?!\d)'
 )
 # Issue 2: 匹配「国家税务总局」的 OCR 噪音变体（如国家报务总码、国家批务总局、国家报务总构）
 _RE_TAX_AUTHORITY = re.compile(r'国家.{0,3}[税报批][务]总[局码构]')
@@ -742,8 +742,9 @@ class PdfInvoiceParser(BaseInvoiceParser):
             line_rest_no_rate = _RE_TAX_RATE_COL.sub('', line_rest)
             all_nums = re.findall(r'\d+(?:\.\d+)?', line_rest_no_rate)
             # Issue 1: 过滤名称本身含有的纯数字（如 12V 中的 12），防止其混入金额列计算
+            # 比较整数部分，避免 12.5 被误过滤（仅精确整数匹配）
             name_embedded_digits = set(re.findall(r'\d+', name))
-            all_nums = [n for n in all_nums if n not in name_embedded_digits or '.' in n]
+            all_nums = [n for n in all_nums if n.split('.')[0] not in name_embedded_digits or '.' in n]
             # Issue 9: 若行内含合计表达式 A=B+C，拆分为两个明细行
             total_m = _RE_TOTAL_EXPR.search(line_rest)
             if total_m:
@@ -1069,7 +1070,7 @@ class PdfInvoiceParser(BaseInvoiceParser):
                         if v is not None:
                             # Issue 1b: 跳过裸整数形式的常见增值税税率（如 OCR 将 13% 识别为 13）
                             # 仅在 plain_numbers 中已有小数金额时才跳过，避免误过滤数量值
-                            if (v in _CN_VAT_RATES and abs(v - round(v)) < 1e-9
+                            if (abs(v - round(v)) < 1e-9 and int(v) in _CN_VAT_RATES
                                     and any(abs(p - round(p)) > 1e-9 for p in plain_numbers)):
                                 j += 1
                                 continue
@@ -1184,7 +1185,7 @@ class PdfInvoiceParser(BaseInvoiceParser):
                 continue
             # Issue 3: 过滤金额看起来像 8 位纯数字日期（YYYYMMDD，范围 20000101-20991231）
             amt_int = int(line.amount)
-            if line.amount == amt_int and 20000101 <= amt_int <= 20991231:
+            if abs(line.amount - amt_int) < 1e-9 and 20000101 <= amt_int <= 20991231:
                 mm = (amt_int // 100) % 100
                 dd = amt_int % 100
                 if 1 <= mm <= 12 and 1 <= dd <= 31:
