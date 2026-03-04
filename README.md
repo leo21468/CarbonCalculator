@@ -145,6 +145,64 @@ out = pipeline.process_invoice_from_dict(invoice_data)
 # out["aggregate_kg"]     # 按 Scope 汇总
 ```
 
+### 使用 myocr2-invoice OCR 服务（图片/PDF → OCR → 碳核算）
+
+#### 前提
+
+启动 myocr2-invoice 服务（默认 `http://localhost:5000`）：
+
+```bash
+# 在 myocr2-invoice 目录中
+python main.py
+```
+
+#### Python 用法
+
+```python
+from src.ocr_adapter import MyOCR2InvoiceAdapter
+from src.pipeline import CarbonAccountingPipeline
+
+pipeline = CarbonAccountingPipeline()
+
+# 方式一：直接调用 OCR 服务
+data = MyOCR2InvoiceAdapter.from_service("invoice.jpg")
+out = pipeline.process_invoice_from_dict(data)
+
+# 方式二：已有 OCR 结果 dict，手动转换
+ocr_result = {
+    "invoice_code": "012002200311",
+    "issue_date": "2023年01月15日",
+    # ... myocr2-invoice 返回的完整 JSON
+}
+data = MyOCR2InvoiceAdapter.convert(ocr_result)
+out = pipeline.process_invoice_from_dict(data)
+
+print(out["aggregate_kg"])     # 按 Scope 汇总排放量
+print(out["ledger_entries"])   # 碳账本分录
+
+# 构建碳利润表
+st = pipeline.build_statement(
+    revenue=1_000_000,
+    traditional_cost=600_000,
+    emission_results=out["emission_results"],
+)
+print(st.net_carbon_pnl)
+```
+
+#### OCR 字段映射说明
+
+| myocr2-invoice 字段 | CarbonCalculator 字段 | 说明 |
+|---|---|---|
+| `item_name` | `lines[i].name` | 商品名称，用于 Scope 分类 |
+| `item_amount` | `lines[i].amount` | **不含税金额**，EEIO 碳排放计算输入 |
+| `item_number` | `lines[i].quantity` | 数量，用于活动数据法 |
+| `item_unit` | `lines[i].unit` | 单位 |
+| `item_price` | `lines[i].unit_price` | 单价 |
+| `item_tax_rate` | 忽略 | 税率不参与碳排放计算 |
+| `item_tax` | 忽略 | 税额不参与碳排放计算 |
+| `issue_date` | `date` | 转换为 YYYY-MM-DD |
+| `tax_exclusive_total_amount` | `total_amount` | 不含税合计金额 |
+
 ### 发票解析与碳核算（Node invoice-parser）
 
 端到端单张/批量处理（解析 → 分类 → 语义增强 → 匹配 → 计算，或场景专项），可选审计追踪：
