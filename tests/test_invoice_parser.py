@@ -717,3 +717,68 @@ class TestDeclaredTotalValidation:
         assert abs(items_sum - declared) < 0.01, (
             f"明细金额之和 {items_sum} 应与合计声明值 {declared} 一致"
         )
+
+
+class TestIdenticalNameDifferentAmountLines:
+    """回归测试：3条同名不同金额明细行（合计9.95元英制螺丝发票场景，商品金额分别为3.15/2.94/2.72）"""
+
+    def test_three_identical_name_lines_table_path(self):
+        """表格路径：3条同名不同金额明细行应全部保留，不被去重"""
+        parser = PdfInvoiceParser()
+        header = ["货物或应税劳务名称", "数量", "单位", "单价", "金额", "税率", "税额"]
+        rows = [
+            ["*金属制品*10.9级美制圆头内六角", "14", "个", "0.225", "3.15", "13%", "0.41"],
+            ["*金属制品*10.9级美制圆头内六角", "14", "个", "0.21", "2.94", "13%", "0.38"],
+            ["*金属制品*10.9级美制圆头内六角", "14", "个", "0.194", "2.72", "13%", "0.35"],
+            ["合计", "", "", "", "8.81", "", "1.14"],
+        ]
+        tables = [[header] + rows]
+        items = parser._extract_lines_from_tables(tables, "")
+        # 合计行应被过滤，3条明细均应保留
+        assert len(items) == 3, f"应有3条明细行，实际 {len(items)} 条: {[(i.name, i.amount) for i in items]}"
+        amounts = sorted(i.amount for i in items)
+        assert abs(amounts[0] - 2.72) < 0.01
+        assert abs(amounts[1] - 2.94) < 0.01
+        assert abs(amounts[2] - 3.15) < 0.01
+
+    def test_vat_rate_integer_not_parsed_as_amount(self):
+        """表格路径：税率列值 13（无%符号）不应被解析为商品金额"""
+        parser = PdfInvoiceParser()
+        # 模拟 pdfplumber 将税率列（13%）丢失 % 符号，以裸整数 13 出现
+        header = ["货物名称", "数量", "单位", "单价", "金额", "税率", "税额"]
+        row = ["*金属制品*螺丝", "14", "个", "0.225", "3.15", "13", "0.41"]
+        tables = [[header, row]]
+        items = parser._extract_lines_from_tables(tables, "")
+        assert len(items) == 1
+        assert abs(items[0].amount - 3.15) < 0.01, (
+            f"amount 应为 3.15，不应为税率整数 13，实际为 {items[0].amount}"
+        )
+
+    def test_post_filter_removes_vat_rate_integer_amounts(self):
+        """_post_filter_lines：若存在小数金额行，应过滤掉 amount 为 VAT 税率整数的行"""
+        from src.models import InvoiceLineItem
+        parser = PdfInvoiceParser()
+        lines = [
+            InvoiceLineItem(name="*金属制品*螺丝", amount=13.0),   # 税率整数，应被过滤
+            InvoiceLineItem(name="*金属制品*螺丝", amount=2.94),
+            InvoiceLineItem(name="*金属制品*螺丝", amount=8.81),
+        ]
+        result = parser._post_filter_lines(lines)
+        amounts = [l.amount for l in result]
+        assert 13.0 not in amounts, f"VAT 税率整数 13 应被过滤，实际: {amounts}"
+        assert any(abs(a - 2.94) < 0.01 for a in amounts)
+
+    def test_declared_total_used_for_three_line_invoice(self):
+        """合计行金额 8.81 应作为 total_amount，而非 sum(3.15+2.94+2.72)"""
+        parser = PdfInvoiceParser()
+        header = ["货物或应税劳务名称", "数量", "单位", "单价", "金额", "税率", "税额"]
+        rows = [
+            ["*金属制品*10.9级美制圆头内六角", "14", "个", "0.225", "3.15", "13%", "0.41"],
+            ["*金属制品*10.9级美制圆头内六角", "14", "个", "0.21", "2.94", "13%", "0.38"],
+            ["*金属制品*10.9级美制圆头内六角", "14", "个", "0.194", "2.72", "13%", "0.35"],
+            ["合计", "", "", "", "8.81", "", "1.14"],
+        ]
+        tables = [[header] + rows]
+        declared = parser._find_declared_total_from_tables(tables)
+        assert declared is not None
+        assert abs(declared - 8.81) < 0.01, f"合计行总金额应为 8.81，实际 {declared}"

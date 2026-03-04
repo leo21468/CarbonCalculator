@@ -530,6 +530,7 @@ class PdfInvoiceParser(BaseInvoiceParser):
         unit_keywords = ("单位",)
         price_keywords = ("单价",)
         tax_code_keywords = ("编码", "税收分类", "分类编码")
+        tax_rate_keywords = ("税率",)
 
         for table in tables:
             if not table or len(table) < 2:
@@ -546,6 +547,7 @@ class PdfInvoiceParser(BaseInvoiceParser):
             unit_col = self._find_col_index(header_str, unit_keywords)
             price_col = self._find_col_index(header_str, price_keywords)
             tax_code_col = self._find_col_index(header_str, tax_code_keywords)
+            tax_rate_col = self._find_col_index(header_str, tax_rate_keywords)
 
             if name_col is None and len(header_str) >= 1:
                 # 若第0列表头为纯数字（行号列），优先用第1列作为名称列
@@ -558,7 +560,11 @@ class PdfInvoiceParser(BaseInvoiceParser):
                 continue
 
             if amount_col is None and len(header_str) >= 5:
-                amount_col = min(5, len(header_str) - 2)
+                fallback = min(5, len(header_str) - 2)
+                # 不能选税率列作为 amount_col
+                if tax_rate_col is not None and fallback == tax_rate_col:
+                    fallback = fallback - 1 if fallback > 0 else fallback + 1
+                amount_col = fallback
 
             # 预处理：合并名称跨行（第二行名称列为空且其他数值列也为空时，
             # 将第一列的续行文字追加到上一行的名称列）
@@ -1206,6 +1212,18 @@ class PdfInvoiceParser(BaseInvoiceParser):
                 if 1 <= mm <= 12 and 1 <= dd <= 31:
                     continue
             result.append(line)
+
+        # Issue 11: 若 amount 为常见增值税税率整数（如 13），且同时存在有小数的金额行，
+        # 则该行极可能是 pdfplumber 将税率列误解析为商品行，应过滤
+        has_decimal_amounts = any(
+            abs(l.amount - round(l.amount)) > 1e-9 for l in result
+        )
+        if has_decimal_amounts:
+            result = [
+                l for l in result
+                if not (abs(l.amount - round(l.amount)) < 1e-9
+                        and int(round(l.amount)) in _CN_VAT_RATES)
+            ]
 
         # Issue 9: 过滤合计行——若某行金额等于所有其他行金额之和，则该行为汇总行，应移除
         # 算法：sum(all) = 2*total，即满足 2*v ≈ total_sum 的那行是合计行
