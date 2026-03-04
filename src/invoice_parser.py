@@ -747,7 +747,7 @@ class PdfInvoiceParser(BaseInvoiceParser):
             # 若存在，输出 a 和 b 两个明细，跳过合计值 c（不依赖 '=' '+'  等文本符号）
             nums_f = [self._parse_number(n) for n in all_nums]
             nums_f = [v for v in nums_f if v is not None and v > 0]
-            sub_amounts = self._detect_sum_pair(nums_f)
+            sub_amounts = self._find_sub_amounts(nums_f)
             if sub_amounts:
                 for sub_amt in sub_amounts:
                     lines.append(InvoiceLineItem(
@@ -1163,29 +1163,22 @@ class PdfInvoiceParser(BaseInvoiceParser):
         return result
 
     @staticmethod
-    def _detect_sum_pair(nums: list) -> "Optional[list]":
-        """检验数字列表中是否存在「两数之和等于另一数」的合计关系。
+    def _find_sub_amounts(nums: list) -> "Optional[list]":
+        """检验数字列表中是否存在「某一个数等于其余所有数之和」的合计关系。
 
-        Issue 9: 当同一行内的金额数字满足 a + b = c 时，c 是合计值，a 和 b 是明细金额。
-        返回 [a, b]（明细金额列表，不含合计 c）；若不存在此关系则返回 None。
+        Issue 9: 合计行金额 = 所有其他明细行金额之和。
+        若找到这样的合计值 v（满足 2*v ≈ sum(nums)），则返回其余明细金额列表；
+        否则返回 None。
 
-        容差 0.005 元，用于浮点精度与 OCR 取整误差。
-        算法复杂度 O(n²)：枚举所有对 (i, j)，查询其和是否在集合中。
+        算法复杂度 O(n)：先求总和，再遍历一次判断每个元素是否等于其余之和。
+        容差 0.01 元（等于 sum 误差 0.01 / 2，即单个金额精度约 ±0.005 元）。
         """
-        n = len(nums)
-        if n < 3:
+        if len(nums) < 2:
             return None
-        # 用集合加速「和在列表中」的查找；保留原始列表以便返回真实值
-        nums_set = set(nums)
-        for i in range(n):
-            for j in range(i + 1, n):
-                candidate_total = nums[i] + nums[j]
-                # 在剩余数字中查找是否有值 ≈ candidate_total
-                for k in range(n):
-                    if k == i or k == j:
-                        continue
-                    if abs(nums[k] - candidate_total) < 0.005:
-                        return [nums[i], nums[j]]
+        total = sum(nums)
+        for k, v in enumerate(nums):
+            if abs(2 * v - total) < 0.01:
+                return [nums[idx] for idx in range(len(nums)) if idx != k]
         return None
 
     @staticmethod
@@ -1214,24 +1207,15 @@ class PdfInvoiceParser(BaseInvoiceParser):
                     continue
             result.append(line)
 
-        # Issue 9: 过滤合计行——若某行金额恰好等于另外两行金额之和，则该行为汇总行，应移除
-        # 复用 _detect_sum_pair 确定哪些索引是合计行，仅保留明细行
-        if len(result) >= 3:
+        # Issue 9: 过滤合计行——若某行金额等于所有其他行金额之和，则该行为汇总行，应移除
+        # 算法：sum(all) = 2*total，即满足 2*v ≈ total_sum 的那行是合计行
+        if len(result) >= 2:
             amounts = [l.amount for l in result]
-            total_indices: set = set()
-            for k in range(len(amounts)):
-                if k in total_indices:
-                    continue
-                other = [amounts[idx] for idx in range(len(amounts)) if idx != k and idx not in total_indices]
-                # 检验 amounts[k] 是否等于 other 中某两个数之和
-                for i in range(len(other)):
-                    for j in range(i + 1, len(other)):
-                        if abs(other[i] + other[j] - amounts[k]) < 0.005:
-                            total_indices.add(k)
-                            break
-                    if k in total_indices:
-                        break
-            result = [l for idx, l in enumerate(result) if idx not in total_indices]
+            total = sum(amounts)
+            for k, v in enumerate(amounts):
+                if abs(2 * v - total) < 0.01:
+                    result = [l for idx, l in enumerate(result) if idx != k]
+                    break
 
         return result
 
