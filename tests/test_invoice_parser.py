@@ -618,3 +618,102 @@ class TestTableOuterContainerSkipped:
         assert not any("项目名称" in n for n in names), (
             f"含'项目名称'的外层表格单元格不应被识别为商品，实际 items: {names}"
         )
+
+
+class TestDateLineNotItem:
+    """测试日期行不应被识别为商品名"""
+
+    def test_date_line_not_item(self):
+        """开票日期行不应被识别为商品名"""
+        parser = PdfInvoiceParser()
+        text = "开票日期：2024年01月15日\n*电力*电费 100 度 0.80 80.00 13% 10.40"
+        items = parser._extract_lines_from_text(text)
+        assert len(items) == 1
+        assert "电" in items[0].name or "电费" in items[0].name
+
+
+class TestTaxBureauLineNotItem:
+    """测试国家税务总局行不应被识别为商品名"""
+
+    def test_tax_bureau_line_not_item(self):
+        """国家税务总局监制行不应被识别为商品名"""
+        parser = PdfInvoiceParser()
+        text = "国家税务总局监制\n*办公用品*文具 1 批 500.00 13% 65.00"
+        items = parser._extract_lines_from_text(text)
+        assert len(items) == 1
+        assert "文具" in items[0].name or "办公" in items[0].name
+
+
+class TestTableTotalRowNotItem:
+    """测试表格中合计行不被识别为商品"""
+
+    def test_table_total_row_not_item(self):
+        """合计行不应被识别为商品"""
+        parser = PdfInvoiceParser()
+        tables = [
+            [
+                ["货物或应税劳务名称", "数量", "单位", "单价", "金额"],
+                ["*电力*电费", "1000", "度", "0.80", "800.00"],
+                ["合计", "", "", "", "800.00"],
+            ]
+        ]
+        items = parser._extract_lines_from_tables(tables, "")
+        assert len(items) == 1
+        assert "电" in items[0].name
+
+
+class TestDeclaredTotalValidation:
+    """测试利用合计行金额验证明细金额之和（新需求）"""
+
+    def test_finds_declared_total(self):
+        """_find_declared_total_from_tables 应从合计行提取总金额"""
+        parser = PdfInvoiceParser()
+        tables = [
+            [
+                ["货物或应税劳务名称", "数量", "单位", "单价", "金额"],
+                ["*电力*电费", "1000", "度", "0.80", "800.00"],
+                ["合计", "", "", "", "800.00"],
+            ]
+        ]
+        total = parser._find_declared_total_from_tables(tables)
+        assert total is not None
+        assert abs(total - 800.00) < 0.01
+
+    def test_sum_matches_declared_total(self):
+        """明细金额之和应与合计行声明的总金额一致"""
+        parser = PdfInvoiceParser()
+        tables = [
+            [
+                ["货物或应税劳务名称", "数量", "单位", "单价", "金额"],
+                ["*电力*电费", "1000", "度", "0.80", "800.00"],
+                ["合计", "", "", "", "800.00"],
+            ]
+        ]
+        items = parser._extract_lines_from_tables(tables, "")
+        declared = parser._find_declared_total_from_tables(tables)
+        items_sum = sum(i.amount for i in items)
+        assert declared is not None
+        assert abs(items_sum - declared) < 0.01, (
+            f"明细金额之和 {items_sum} 应与合计声明值 {declared} 一致"
+        )
+
+    def test_multi_item_sum_matches_declared_total(self):
+        """多商品行金额之和应与合计行声明值一致"""
+        parser = PdfInvoiceParser()
+        tables = [
+            [
+                ["货物或应税劳务名称", "数量", "单位", "单价", "金额"],
+                ["*电力*电费", "1000", "度", "0.80", "800.00"],
+                ["*办公用品*文具", "5", "套", "20.00", "100.00"],
+                ["合计", "", "", "", "900.00"],
+            ]
+        ]
+        items = parser._extract_lines_from_tables(tables, "")
+        declared = parser._find_declared_total_from_tables(tables)
+        items_sum = sum(i.amount for i in items)
+        assert len(items) == 2
+        assert declared is not None
+        assert abs(declared - 900.00) < 0.01
+        assert abs(items_sum - declared) < 0.01, (
+            f"明细金额之和 {items_sum} 应与合计声明值 {declared} 一致"
+        )

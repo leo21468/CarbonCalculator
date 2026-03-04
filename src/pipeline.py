@@ -20,11 +20,18 @@ from .carbon_ledger import (
 )
 from .config import AppConfig
 
+import re as _re
+
 # 非产品行关键词（汇总、元数据等；避免误伤含「单位」等的正常品名）
 _NON_PRODUCT_KEYWORDS = (
-    "价税合计", "合计（", "合计(", "小计", "买方信息", "购方名称", "销方名称",
-    "电子发票", "发票号码", "发票代码", "开票日期", "纳税人识别号", "统一社会信用",
+    "价税合计", "合计（", "合计(", "合计", "小计",
+    "买方信息", "购方名称", "销方名称",
+    "电子发票", "发票号码", "发票代码", "开票日期",
+    "纳税人识别号", "统一社会信用",
+    "国家税务总局", "监制", "防伪税控",
 )
+
+_DATE_RE = _re.compile(r'\d{4}(?:年\d{1,2}月\d{1,2}日?|[-/]\d{1,2}[-/]\d{1,2})')
 
 
 def _filter_invalid_invoice_lines(invoice: "Invoice") -> None:
@@ -37,6 +44,8 @@ def _filter_invalid_invoice_lines(invoice: "Invoice") -> None:
         if not name:
             continue
         if any(kw in name for kw in _NON_PRODUCT_KEYWORDS):
+            continue
+        if _DATE_RE.search(name):
             continue
         if amt >= amt_limit:
             continue
