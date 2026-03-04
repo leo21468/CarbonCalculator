@@ -27,7 +27,6 @@ from typing import List, Optional, Union
 _RE_PERCENT = re.compile(r'\d+(?:\.\d+)?%')   # 税率百分比（如"13%"）
 _RE_CURRENCY = re.compile(r'[¥￥]')            # 人民币货币符号
 _RE_RMBORЦNY = re.compile(r'\b(RMB|CNY)\b', re.IGNORECASE)  # 货币名称缩写
-_RE_TAX_RATE_COL = re.compile(r'\d+(?:\.\d+)?%')  # 发票行中的税率列值
 # Issue 3: 扩展日期格式，增加 YYYYMMDD 纯数字格式（如 20250403，范围 2000-2099 年）
 _RE_DATE = re.compile(
     r'\d{4}(?:年\d{1,2}月\d{1,2}日?|[-/]\d{1,2}[-/]\d{1,2})'
@@ -222,9 +221,7 @@ class PdfInvoiceParser(BaseInvoiceParser):
             raise ImportError("图片型 PDF 需要 PaddleOCR：pip install paddleocr")
 
         if not hasattr(PdfInvoiceParser, '_ocr_instance') or PdfInvoiceParser._ocr_instance is None:
-            import os
-            use_gpu = os.environ.get("PADDLE_USE_GPU", "1").strip() not in ("0", "false", "False", "no")
-            PdfInvoiceParser._ocr_instance = PaddleOCR(use_angle_cls=True, lang='ch', show_log=False, use_gpu=use_gpu)
+            PdfInvoiceParser._ocr_instance = PaddleOCR(use_textline_orientation=True, lang='ch')
         ocr = PdfInvoiceParser._ocr_instance
 
         import numpy as np
@@ -341,6 +338,34 @@ class PdfInvoiceParser(BaseInvoiceParser):
         return rows
 
     @staticmethod
+    def _fit_kmeans_1d(x_centers: list, n_clusters: int):
+        """对 1-D x 坐标列表拟合 KMeans，返回拟合后的 KMeans 实例，失败返回 None。
+
+        抽取公共逻辑，避免在 _cluster_columns 和 _cluster_x_centers 中重复
+        导入 sklearn/numpy 及构造 KMeans 的样板代码。
+
+        参数:
+            x_centers: x 坐标列表。
+            n_clusters: 目标簇数（已由调用方校验 >= 1 且 <= len(x_centers)）。
+
+        返回:
+            拟合完成的 KMeans 实例；若 sklearn/numpy 未安装或拟合失败则返回 None
+            （调用方应降级到备用算法）。
+        """
+        try:
+            from sklearn.cluster import KMeans
+            import numpy as np
+        except ImportError:
+            return None
+        try:
+            arr = np.array(x_centers).reshape(-1, 1)
+            km = KMeans(n_clusters=n_clusters, random_state=0, n_init="auto")
+            km.fit(arr)
+            return km
+        except (ValueError, RuntimeError):
+            return None
+
+    @staticmethod
     def _cluster_columns(x_centers: list) -> list:
         """对 x 坐标列表做轻量 1-D 聚类，返回各列中心点列表（升序）。
 
@@ -353,16 +378,9 @@ class PdfInvoiceParser(BaseInvoiceParser):
         n = len(x_centers)
         n_cols = min(max(6, n // max(2, n // 10)), n, 12)
 
-        try:
-            from sklearn.cluster import KMeans
-            import numpy as np
-            arr = np.array(x_centers).reshape(-1, 1)
-            km = KMeans(n_clusters=n_cols, random_state=0)
-            km.fit(arr)
-            centers = sorted(float(c[0]) for c in km.cluster_centers_)
-            return centers
-        except Exception:
-            pass
+        km = PdfInvoiceParser._fit_kmeans_1d(x_centers, n_cols)
+        if km is not None:
+            return sorted(float(c[0]) for c in km.cluster_centers_)
 
         # 降级：基于相邻间距的分箱
         sorted_x = sorted(x_centers)
@@ -398,15 +416,9 @@ class PdfInvoiceParser(BaseInvoiceParser):
             return []
         n = len(centers)
         k = min(n_clusters, n)
-        try:
-            from sklearn.cluster import KMeans
-            import numpy as np
-            arr = np.array(centers).reshape(-1, 1)
-            km = KMeans(n_clusters=k, random_state=0, n_init="auto")
-            km.fit(arr)
+        km = PdfInvoiceParser._fit_kmeans_1d(centers, k)
+        if km is not None:
             return list(km.labels_)
-        except Exception:
-            pass
         # 降级：按坐标排序后等分 k 个簇，返回原始位置对应的标签
         sorted_pairs = sorted(enumerate(centers), key=lambda x: x[1])
         labels = [0] * n
@@ -429,12 +441,14 @@ class PdfInvoiceParser(BaseInvoiceParser):
 
         ocr_structured = []
 
-        try:
-            ocr_text, ocr_structured = self._ocr_pdf(pdf)
-            if ocr_text.strip():
-                all_text = ocr_text
-        except Exception:
-            pass
+        # 仅对图片型 PDF（pdfplumber 无法提取文本）使用 OCR
+        if not all_text.strip():
+            try:
+                ocr_text, ocr_structured = self._ocr_pdf(pdf)
+                if ocr_text.strip():
+                    all_text = ocr_text
+            except Exception:
+                pass
 
         inv = Invoice(source_format="PDF")
 
@@ -743,7 +757,7 @@ class PdfInvoiceParser(BaseInvoiceParser):
             line_rest = processed_text[name_end: eol if eol != -1 else len(processed_text)]
             # 过滤税率列：先移除形如"13%"、"9%"等百分比值，避免税率数字被误认为金额
             # 中国增值税发票税率列（如"13%"、"9%"）不参与碳排放量化，碳计算仅使用金额字段
-            line_rest_no_rate = _RE_TAX_RATE_COL.sub('', line_rest)
+            line_rest_no_rate = _RE_PERCENT.sub('', line_rest)
             all_nums = re.findall(r'\d+(?:\.\d+)?', line_rest_no_rate)
             # Issue 1: 过滤名称本身含有的纯数字（如 12V 中的 12），防止其混入金额列计算
             # 比较整数部分，避免 12.5 被误过滤（仅精确整数匹配）
@@ -814,7 +828,7 @@ class PdfInvoiceParser(BaseInvoiceParser):
                 eol = processed_text.find('\n', name_end)
                 line_rest = processed_text[name_end: eol if eol != -1 else len(processed_text)]
                 # 过滤税率列：先移除百分比值，避免税率数字被误认为金额
-                line_rest_no_rate = _RE_TAX_RATE_COL.sub('', line_rest)
+                line_rest_no_rate = _RE_PERCENT.sub('', line_rest)
                 all_nums = re.findall(r'\d+(?:\.\d+)?', line_rest_no_rate)
                 if len(all_nums) >= 4:
                     quantity = self._parse_number(all_nums[0])
@@ -908,7 +922,7 @@ class PdfInvoiceParser(BaseInvoiceParser):
                 out = []
                 subset = cols[start + 1:] if start >= 0 else cols
                 for col in subset:
-                    col = _RE_TAX_RATE_COL.sub('', col.strip()).strip()
+                    col = _RE_PERCENT.sub('', col.strip()).strip()
                     if not col:
                         continue
                     nums = self._parse_numbers_from_cell(col)
