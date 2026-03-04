@@ -28,6 +28,7 @@ _RE_PERCENT = re.compile(r'\d+(?:\.\d+)?%')   # 税率百分比（如"13%"）
 _RE_CURRENCY = re.compile(r'[¥￥]')            # 人民币货币符号
 _RE_RMBORЦNY = re.compile(r'\b(RMB|CNY)\b', re.IGNORECASE)  # 货币名称缩写
 _RE_TAX_RATE_COL = re.compile(r'\d+(?:\.\d+)?%')  # 发票行中的税率列值
+_RE_DATE = re.compile(r'\d{4}(?:年\d{1,2}月\d{1,2}日?|[-/]\d{1,2}[-/]\d{1,2})')  # 日期格式
 
 # 发票非商品行关键词：这些行不应被识别为商品明细
 _INVOICE_NON_ITEM_KEYWORDS = (
@@ -485,8 +486,14 @@ class PdfInvoiceParser(BaseInvoiceParser):
                 except Exception:
                     pass
 
-        # 计算总金额
-        if inv.lines:
+        # 后置过滤：去除非商品行、日期行、零金额行
+        inv.lines = self._post_filter_lines(inv.lines)
+
+        # 计算总金额：优先使用发票表格中合计行声明的值，用于验证明细金额之和是否一致
+        declared_total = self._find_declared_total_from_tables(all_tables)
+        if declared_total and declared_total > 0:
+            inv.total_amount = declared_total
+        elif inv.lines:
             inv.total_amount = sum(l.amount for l in inv.lines)
 
         return inv
@@ -586,9 +593,9 @@ class PdfInvoiceParser(BaseInvoiceParser):
                             if any('\u4e00' <= c <= '\u9fff' for c in str(cell)):
                                 name = cell.strip()
                                 break
-                if not name or name in ("合计", "价税合计", "小计", ""):
+                if not name:
                     continue
-                if any(kw in name for kw in ("合计", "价税合计", "小计", "项目名称")):
+                if any(kw in name for kw in _INVOICE_NON_ITEM_KEYWORDS):
                     continue
 
                 # 提取税收分类名称（如 *成品油*汽油）
@@ -702,6 +709,8 @@ class PdfInvoiceParser(BaseInvoiceParser):
         )
         for m in pattern.finditer(processed_text):
             name = m.group(1).strip()
+            if any(kw in name for kw in _INVOICE_NON_ITEM_KEYWORDS):
+                continue
             # 跳过类别不符合标准税收分类格式的情况（真实税收分类仅含汉字/字母/空格，无数字、斜杠等特殊字符）
             # 例如 *22*、*外径25*、*12吨*、*1/2* 均来自产品规格而非商品名
             # 长度约束：2-15 个字符（真实税收分类通常 2-8 个汉字）
@@ -964,6 +973,7 @@ class PdfInvoiceParser(BaseInvoiceParser):
                 and not currency_pat.match(s)
                 and len(s) <= 20
                 and not re.search(r'\*+[^*]+\*+', s)
+                and not any(kw in s for kw in _INVOICE_NON_ITEM_KEYWORDS)
             )
 
         def has_reasonable_decimals(v: float) -> bool:
@@ -1068,6 +1078,52 @@ class PdfInvoiceParser(BaseInvoiceParser):
                 result = result[:-1]
             result = result.rstrip() + cont.strip()
         return result.strip()
+
+    @staticmethod
+    def _post_filter_lines(lines: "List[InvoiceLineItem]") -> "List[InvoiceLineItem]":
+        """后置过滤：从解析结果中移除非商品行（合计、日期、零金额等）。"""
+        result = []
+        for line in lines:
+            name = (line.name or "").strip()
+            if not name:
+                continue
+            if any(kw in name for kw in _INVOICE_NON_ITEM_KEYWORDS):
+                continue
+            if _RE_DATE.search(name):
+                continue
+            if line.amount <= 0:
+                continue
+            result.append(line)
+        return result
+
+    def _find_declared_total_from_tables(self, tables: list) -> "Optional[float]":
+        """从表格中提取合计/价税合计行的声明总金额，用于验证明细金额之和是否一致。"""
+        _total_kws = ("价税合计", "合计")
+        for table in tables:
+            if not table or len(table) < 2:
+                continue
+            header = table[0]
+            if header is None:
+                continue
+            header_str = [str(h).strip() if h else "" for h in header]
+            amount_col = self._find_amount_col_index(header_str)
+            for row in table[1:]:
+                if row is None:
+                    continue
+                row_str = [str(c).strip() if c else "" for c in row]
+                is_total_row = any(any(kw in cell for kw in _total_kws) for cell in row_str)
+                if not is_total_row:
+                    continue
+                if amount_col is not None and amount_col < len(row_str):
+                    amt = self._parse_number(row_str[amount_col])
+                    if amt and amt > 0:
+                        return amt
+                # Fallback: largest positive number in the row
+                candidates = [self._parse_number(c) for c in row_str]
+                valid = [v for v in candidates if v and v > 0]
+                if valid:
+                    return max(valid)
+        return None
 
     @staticmethod
     def _find_col_index(header: List[str], keywords: tuple) -> Union[int, None]:
