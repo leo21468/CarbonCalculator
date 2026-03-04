@@ -28,7 +28,17 @@ _RE_PERCENT = re.compile(r'\d+(?:\.\d+)?%')   # 税率百分比（如"13%"）
 _RE_CURRENCY = re.compile(r'[¥￥]')            # 人民币货币符号
 _RE_RMBORЦNY = re.compile(r'\b(RMB|CNY)\b', re.IGNORECASE)  # 货币名称缩写
 _RE_TAX_RATE_COL = re.compile(r'\d+(?:\.\d+)?%')  # 发票行中的税率列值
-_RE_DATE = re.compile(r'\d{4}(?:年\d{1,2}月\d{1,2}日?|[-/]\d{1,2}[-/]\d{1,2})')  # 日期格式
+# Issue 3: 扩展日期格式，增加 YYYYMMDD 纯数字格式（如 20250403）
+_RE_DATE = re.compile(
+    r'\d{4}(?:年\d{1,2}月\d{1,2}日?|[-/]\d{1,2}[-/]\d{1,2})'
+    r'|(?<!\d)2[0-9]{3}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])(?!\d)'
+)
+# Issue 2: 匹配「国家税务总局」的 OCR 噪音变体（如国家报务总码、国家批务总局、国家报务总构）
+_RE_TAX_AUTHORITY = re.compile(r'国家.{0,3}[税报批][务]总[局码构]')
+# Issue 9: 匹配合计表达式「A=B+C」，此类行是汇总行而非明细行
+_RE_TOTAL_EXPR = re.compile(r'(\d+(?:\.\d+)?)\s*[=＝]\s*(\d+(?:\.\d+)?)\s*\+\s*(\d+(?:\.\d+)?)')
+# Issue 1b: 中国增值税常见税率（整数，OCR 有时丢失 '%' 符号）
+_CN_VAT_RATES = frozenset({1, 3, 5, 6, 9, 10, 11, 13, 16, 17})
 
 # 发票非商品行关键词：这些行不应被识别为商品明细
 _INVOICE_NON_ITEM_KEYWORDS = (
@@ -38,6 +48,8 @@ _INVOICE_NON_ITEM_KEYWORDS = (
     "国家税务总局", "监制", "防伪税控",
     "税率", "单价", "数量", "规格型号", "单位",  # 表头
     "备注", "收款人", "复核",
+    "税务局",          # Issue 4: 过滤含税务机构名称的行（如上海市税务局）
+    "名称", "项目名称",  # Issue 5: 过滤表头类标签行
 )
 
 from .models import Invoice, InvoiceLineItem, SellerInfo
@@ -487,6 +499,8 @@ class PdfInvoiceParser(BaseInvoiceParser):
                     pass
 
         # 后置过滤：去除非商品行、日期行、零金额行
+        # Issue 6: 先去重（按名称+金额），防止同一明细被多个解析路径重复输出
+        inv.lines = self._dedup_lines(inv.lines)
         inv.lines = self._post_filter_lines(inv.lines)
 
         # 计算总金额：优先使用发票表格中合计行声明的值，用于验证明细金额之和是否一致
@@ -727,6 +741,21 @@ class PdfInvoiceParser(BaseInvoiceParser):
             # 中国增值税发票税率列（如"13%"、"9%"）不参与碳排放量化，碳计算仅使用金额字段
             line_rest_no_rate = _RE_TAX_RATE_COL.sub('', line_rest)
             all_nums = re.findall(r'\d+(?:\.\d+)?', line_rest_no_rate)
+            # Issue 1: 过滤名称本身含有的纯数字（如 12V 中的 12），防止其混入金额列计算
+            name_embedded_digits = set(re.findall(r'\d+', name))
+            all_nums = [n for n in all_nums if n not in name_embedded_digits or '.' in n]
+            # Issue 9: 若行内含合计表达式 A=B+C，拆分为两个明细行
+            total_m = _RE_TOTAL_EXPR.search(line_rest)
+            if total_m:
+                for sub_amt_str in (total_m.group(2), total_m.group(3)):
+                    sub_amt = self._parse_number(sub_amt_str)
+                    if sub_amt and sub_amt > 0:
+                        lines.append(InvoiceLineItem(
+                            name=name,
+                            tax_classification_name=name,
+                            amount=sub_amt,
+                        ))
+                continue
             if len(all_nums) >= 4:
                 # 中国增值税发票固定列顺序：数量, 单价, 金额（不含税）, 税额
                 # 倒数第二个数字为金额（不含税），最后一个为税额（忽略）
@@ -771,6 +800,9 @@ class PdfInvoiceParser(BaseInvoiceParser):
                 # 额外：非 *类别* 格式时，名称不应超过 30 字（过长说明是段落文本而非商品名）
                 if len(name) > 30:
                     continue
+                # Issue 4: 名称过短（如单个货币字符 '元'）或含机构/地理词，跳过
+                if len(name) < 2:
+                    continue
                 # 提取本行名称之后的所有数字，按位置取值
                 name_end = m.start(1) + len(m.group(1))
                 eol = processed_text.find('\n', name_end)
@@ -783,9 +815,19 @@ class PdfInvoiceParser(BaseInvoiceParser):
                     unit_price = self._parse_number(all_nums[-3])
                     amount = self._parse_number(all_nums[-2]) or 0.0
                 else:
-                    quantity = self._parse_number(m.group(2)) if m.group(2) else None
-                    unit_price = self._parse_number(m.group(4)) if m.group(4) else None
-                    amount = self._parse_number(m.group(5)) or 0.0
+                    # Issue 8: 少于4个数字时，若有2+个数字取倒数第二（金额），避免最后一个税额被误用
+                    if len(all_nums) >= 2:
+                        amount = self._parse_number(all_nums[-2]) or 0.0
+                        quantity = self._parse_number(m.group(2)) if m.group(2) else None
+                        unit_price = self._parse_number(m.group(4)) if m.group(4) else None
+                    elif len(all_nums) == 1:
+                        amount = self._parse_number(all_nums[0]) or 0.0
+                        quantity = self._parse_number(m.group(2)) if m.group(2) else None
+                        unit_price = self._parse_number(m.group(4)) if m.group(4) else None
+                    else:
+                        quantity = self._parse_number(m.group(2)) if m.group(2) else None
+                        unit_price = self._parse_number(m.group(4)) if m.group(4) else None
+                        amount = self._parse_number(m.group(5)) or 0.0
                 unit = m.group(3).strip() if m.group(3) else None
                 if amount <= 0:
                     continue
@@ -948,15 +990,29 @@ class PdfInvoiceParser(BaseInvoiceParser):
         import re
 
         def is_name_only_line(line: str) -> bool:
-            """True if line is a *cat*name line with no inline numbers/currency/percent."""
+            """True if line looks like a product name with no inline numbers/currency/percent.
+
+            Accepts both *cat*name format and pure Chinese product names (Issue 10).
+            """
             s = line.strip()
-            if not re.search(r'\*+[^*]+\*+', s):
+            # *cat*name 格式 或 含至少3个汉字的中文商品名（Issue 10；3+字符避免误识别续行片段如「务费」）
+            # 纯中文名称：不含数字（防止「（礼盒装）1.25kg」等规格行被误识别为商品名）
+            has_star_cat = bool(re.search(r'\*+[^*]+\*+', s))
+            has_chinese_name = (bool(re.search(r'[\u4e00-\u9fff]{3,}', s))
+                                and not re.search(r'\d', s))
+            if not has_star_cat and not has_chinese_name:
                 return False
             if re.search(r'[¥￥%]', s):
                 return False
+            # 过滤非商品行关键词
+            if any(kw in s for kw in _INVOICE_NON_ITEM_KEYWORDS):
+                return False
+            # Issue 2: 过滤国家税务总局 OCR 变体
+            if _RE_TAX_AUTHORITY.search(s):
+                return False
             # 允许名称中含单个数字（如型号），含2个以上独立数字序列才排除
-            s_without_categories = re.sub(r'\*[^*]+\*', '', s)
-            num_sequences = re.findall(r'\b\d+(?:\.\d+)?\b', s_without_categories)
+            s_clean = re.sub(r'\*[^*]+\*', '', s)
+            num_sequences = re.findall(r'\b\d+(?:\.\d+)?\b', s_clean)
             if len(num_sequences) >= 2:
                 return False
             return True
@@ -1011,6 +1067,12 @@ class PdfInvoiceParser(BaseInvoiceParser):
                     if bare_number_pat.match(nxt):
                         v = self._parse_number(nxt)
                         if v is not None:
+                            # Issue 1b: 跳过裸整数形式的常见增值税税率（如 OCR 将 13% 识别为 13）
+                            # 仅在 plain_numbers 中已有小数金额时才跳过，避免误过滤数量值
+                            if (v in _CN_VAT_RATES and abs(v - round(v)) < 1e-9
+                                    and any(abs(p - round(p)) > 1e-9 for p in plain_numbers)):
+                                j += 1
+                                continue
                             plain_numbers.append(v)
                         j += 1
                         continue
@@ -1035,9 +1097,18 @@ class PdfInvoiceParser(BaseInvoiceParser):
                         unit_price = reasonable_nums[-3] if len(reasonable_nums) >= 3 else None
                         amount = reasonable_nums[-2]  # 倒数第二 = 金额（不含税）
                     elif len(reasonable_nums) == 2:
-                        quantity = None
-                        unit_price = None
-                        amount = reasonable_nums[-2]  # 倒数第二 = 第一个（=金额）
+                        a, b = reasonable_nums[0], reasonable_nums[1]
+                        # Issue 7: 区分 [数量, 金额] 和 [金额, 税额] 两种情况
+                        # 若首数为纯整数且第二数更大，则判断为 [数量, 金额] 格式
+                        if abs(a - round(a)) < 1e-9 and b >= a:
+                            quantity = int(a)
+                            unit_price = None
+                            amount = b
+                        else:
+                            # 标准 [金额, 税额] 格式：取首个（=倒数第二）作为金额
+                            quantity = None
+                            unit_price = None
+                            amount = a
                     elif len(reasonable_nums) == 1:
                         quantity = None
                         unit_price = None
@@ -1080,6 +1151,18 @@ class PdfInvoiceParser(BaseInvoiceParser):
         return result.strip()
 
     @staticmethod
+    def _dedup_lines(lines: "List[InvoiceLineItem]") -> "List[InvoiceLineItem]":
+        """Issue 6: 按名称+金额去重，防止同一明细被多个解析路径重复输出。"""
+        seen: set = set()
+        result = []
+        for line in lines:
+            key = (line.name, line.amount)
+            if key not in seen:
+                seen.add(key)
+                result.append(line)
+        return result
+
+    @staticmethod
     def _post_filter_lines(lines: "List[InvoiceLineItem]") -> "List[InvoiceLineItem]":
         """后置过滤：从解析结果中移除非商品行（合计、日期、零金额等）。"""
         result = []
@@ -1091,8 +1174,21 @@ class PdfInvoiceParser(BaseInvoiceParser):
                 continue
             if _RE_DATE.search(name):
                 continue
+            # Issue 2: 过滤「国家税务总局」OCR 变体（如国家报务总码、国家批务总局）
+            if _RE_TAX_AUTHORITY.search(name):
+                continue
+            # Issue 9: 过滤合计表达式行（如 19.72=10.74+8.98）
+            if _RE_TOTAL_EXPR.search(name):
+                continue
             if line.amount <= 0:
                 continue
+            # Issue 3: 过滤金额看起来像 8 位纯数字日期（YYYYMMDD，范围 20000101-20991231）
+            amt_int = int(line.amount)
+            if line.amount == amt_int and 20000101 <= amt_int <= 20991231:
+                mm = (amt_int // 100) % 100
+                dd = amt_int % 100
+                if 1 <= mm <= 12 and 1 <= dd <= 31:
+                    continue
             result.append(line)
         return result
 
