@@ -509,3 +509,112 @@ class TestTotalRowNotItem:
         # 只应有电费一条
         assert len(items) == 1
 
+
+
+class TestTableNameColRowIndex:
+    """测试表格表头第0列为纯数字（行号）时，名称列应改用第1列"""
+
+    def test_row_index_col_0_uses_col1_as_name(self):
+        """当表头第0列为纯数字行号时，应优先用第1列作为名称列"""
+        parser = PdfInvoiceParser()
+        # 模拟序号+名称+金额结构的表格
+        header = ["1", "货物名称", "金额"]
+        row = ["1", "螺丝", "9.95"]
+        tables = [[header, row]]
+        items = parser._extract_lines_from_tables(tables, "")
+        assert len(items) == 1
+        assert items[0].name == "螺丝", f"名称应为 '螺丝'，实际为 '{items[0].name}'"
+        assert abs(items[0].amount - 9.95) < 0.01
+
+
+class TestSmallAmountItemParsed:
+    """测试小金额商品（< 15 元）能被正确识别"""
+
+    def test_small_amount_below_15_parsed(self):
+        """金额 < 15 元的商品行应被正常解析，不应被过滤"""
+        parser = PdfInvoiceParser()
+        text = "*金属制品*螺丝 个 10 0.90 9.00 13% 1.17"
+        items = parser._extract_lines_from_text(text)
+        assert len(items) >= 1
+        assert abs(items[0].amount - 9.00) < 0.01, f"amount 应为 9.00，实际为 {items[0].amount}"
+
+    def test_small_amount_under_3_yuan_parsed(self):
+        """金额低至 2.20 元的商品行应被正常解析"""
+        parser = PdfInvoiceParser()
+        text = "*电子元件*连接器 个 2 1.10 2.20 1% 0.02"
+        items = parser._extract_lines_from_text(text)
+        assert len(items) >= 1
+        assert abs(items[0].amount - 2.20) < 0.01, f"amount 应为 2.20，实际为 {items[0].amount}"
+
+
+class TestNonAsteriskItemParsed:
+    """测试无 *类别* 前缀的商品（如普通五金）能被 Pattern 2 解析"""
+
+    def test_screw_name_without_prefix_parsed(self):
+        """无 *类别* 前缀的 '螺丝' 行应通过 Pattern 2 解析"""
+        parser = PdfInvoiceParser()
+        # Pattern 2 fallback：商品名后跟数字，用于电商平台发票
+        text = "螺丝 M3×10mm 100粒 9.00"
+        items = parser._extract_lines_from_text(text)
+        assert len(items) >= 1
+        assert items[0].amount > 0, f"螺丝的金额应 > 0，实际为 {items[0].amount}"
+
+    def test_bearing_name_without_prefix_parsed(self):
+        """无 *类别* 前缀的 '轴承' 行应通过 Pattern 2 解析"""
+        parser = PdfInvoiceParser()
+        text = "轴承 6202 5个 17.82"
+        items = parser._extract_lines_from_text(text)
+        assert len(items) >= 1
+        assert items[0].amount > 0
+
+
+class TestNumericCategoryFiltered:
+    """测试纯数字或含数字的规格类别（如 *22*7、*外径25*）被过滤"""
+
+    def test_numeric_only_category_filtered(self):
+        """纯数字类别 *22* 应被过滤，不识别为商品"""
+        parser = PdfInvoiceParser()
+        text = "*22*7 1 17.82 17.82 1% 0.18"
+        items = parser._extract_lines_from_text(text)
+        # *22* 应被过滤（纯数字类别）
+        names = [i.name for i in items]
+        assert not any("22" in n and n.startswith("*") for n in names), (
+            f"*22* 类别应被过滤，实际 items: {names}"
+        )
+
+    def test_spec_with_digit_in_category_filtered(self):
+        """含数字的规格类别 *外径25* 不应被 Pattern 1 识别为合法商品分类名"""
+        parser = PdfInvoiceParser()
+        # 模拟 30.78 轴承发票的规格字符串（单独测试 Pattern 1 的过滤效果）
+        # 金额 30.48 来自实际发票单价 1.5237623762376 × 数量 20 ≈ 30.48
+        text = "*外径25* 个 20 1.52 30.48 1% 0.30"
+        items = parser._extract_lines_from_text(text)
+        names = [i.name for i in items]
+        # Pattern 1 应过滤含数字的分类名；Pattern 2 fallback 可能仍匹配（外径25*），
+        # 关键是 Pattern 1 不应以 *外径25* 为合法商品名提取
+        assert not any(n.startswith("*外径25*") for n in names), (
+            f"Pattern 1 不应将 *外径25* 识别为合法商品分类，实际 items: {names}"
+        )
+
+
+class TestTableOuterContainerSkipped:
+    """测试包含完整发票项目区的外层表格单元格不被识别为商品名"""
+
+    def test_cell_with_invoice_header_skipped(self):
+        """包含 '项目名称' 的表格单元格内容不应被识别为商品"""
+        parser = PdfInvoiceParser()
+        # 模拟 pdfplumber 提取到外层容器表格
+        full_items_cell = (
+            "项目名称 规格型号 单位 数量 单价 金额 税率 税额\n"
+            "*轴承*轴承 8×22×7 件 1 17.82 17.82 1% 0.18\n"
+            "合计 ¥17.82 ¥0.18"
+        )
+        header = ["购买方", "名称：上海交通大学", None, "销售方", "名称：轴承公司"]
+        row = [full_items_cell, None, None, None, None]
+        tables = [[header, row]]
+        items = parser._extract_lines_from_tables(tables, "")
+        # 包含 '项目名称' 的单元格内容不应被识别为商品
+        names = [i.name for i in items]
+        assert not any("项目名称" in n for n in names), (
+            f"含'项目名称'的外层表格单元格不应被识别为商品，实际 items: {names}"
+        )
