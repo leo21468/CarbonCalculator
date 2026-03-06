@@ -728,6 +728,41 @@ class PdfInvoiceParser(BaseInvoiceParser):
                 merged_lines.append(merged)
                 i = j
             else:
+                # 当前行是 *XX*YY + 数据 格式（名称行含有行内数字，如 *类别*商品名 1 76.99 76.99 13% 10.01）
+                # 此时仍需向前看，将后续纯文本续行合并到名称中
+                # 仅在数据部分不含中文（即规格列与名称列已在同行的情况下不适用）时才合并续行
+                if line.strip().startswith("*") and re.search(r'\d', line):
+                    star_m = re.match(r'(\*+[^*\n]+\*+[^\s]*)', line.strip())
+                    if star_m:
+                        name_part = star_m.group(1)
+                        data_part = line.strip()[len(name_part):]
+                        # 若数据部分含中文字符（说明规格信息已内联），不进行续行合并
+                        data_has_chinese = bool(re.search(r'[\u4e00-\u9fff]', data_part))
+                        if not data_has_chinese:
+                            j = i + 1
+                            continuation = ""
+                            while j < len(raw_lines):
+                                nxt = raw_lines[j].strip()
+                                if not nxt:
+                                    j += 1
+                                    continue
+                                if nxt.startswith("*"):
+                                    break
+                                # 检查关键词时同时考虑含空格的变体（如"合 计"→"合计"）
+                                nxt_nospace = nxt.replace(' ', '')
+                                if any(kw in nxt or kw in nxt_nospace for kw in _INVOICE_NON_ITEM_KEYWORDS):
+                                    break
+                                # 续行条件：不含小数金额、不含税率、不是纯数字行
+                                if (_RE_PERCENT.search(nxt)
+                                        or re.search(r'(?<![a-zA-Z\u4e00-\u9fff])\d+\.\d+', nxt)
+                                        or _pure_num_re.match(nxt)):
+                                    break
+                                continuation += nxt
+                                j += 1
+                            if continuation:
+                                merged_lines.append(name_part + continuation + data_part)
+                                i = j
+                                continue
                 merged_lines.append(line)
                 i += 1
         processed_text = "\n".join(merged_lines)
@@ -758,7 +793,10 @@ class PdfInvoiceParser(BaseInvoiceParser):
             # 过滤税率列：先移除形如"13%"、"9%"等百分比值，避免税率数字被误认为金额
             # 中国增值税发票税率列（如"13%"、"9%"）不参与碳排放量化，碳计算仅使用金额字段
             line_rest_no_rate = _RE_PERCENT.sub('', line_rest)
-            all_nums = re.findall(r'\d+(?:\.\d+)?', line_rest_no_rate)
+            # Issue: 规格列中的计量单位（如 400g、12V、2800mAh）不应被误识别为金额或数量
+            # 按空白分词后保留纯数字 token（仅含数字、千位逗号或小数点），排除混合字母的规格字符串
+            all_nums = [w for w in line_rest_no_rate.split()
+                        if re.match(r'^[\d,，]+(?:\.\d+)?$', w)]
             # Issue 1: 过滤名称本身含有的纯数字（如 12V 中的 12），防止其混入金额列计算
             # 比较整数部分，避免 12.5 被误过滤（仅精确整数匹配）
             name_embedded_digits = set(re.findall(r'\d+', name))
@@ -829,7 +867,9 @@ class PdfInvoiceParser(BaseInvoiceParser):
                 line_rest = processed_text[name_end: eol if eol != -1 else len(processed_text)]
                 # 过滤税率列：先移除百分比值，避免税率数字被误认为金额
                 line_rest_no_rate = _RE_PERCENT.sub('', line_rest)
-                all_nums = re.findall(r'\d+(?:\.\d+)?', line_rest_no_rate)
+                # 排除混合字母+数字的规格字符串（如 400g、12V），与 Pattern 1 保持一致
+                all_nums = [w for w in line_rest_no_rate.split()
+                            if re.match(r'^[\d,，]+(?:\.\d+)?$', w)]
                 if len(all_nums) >= 4:
                     quantity = self._parse_number(all_nums[0])
                     unit_price = self._parse_number(all_nums[-3])

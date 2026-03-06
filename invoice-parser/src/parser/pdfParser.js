@@ -93,15 +93,37 @@ function extractItemsFromText(text) {
   }
 
   if (headerLineIdx >= 0) {
-    // 合并跨行明细名称：以 '*' 开头且不含数字的行视为名称续行
+    // 合并跨行明细名称：以 '*' 开头的行，将后续纯文本续行（无金额/税率/纯数字）合并
     const mergedLines = [];
     let i = headerLineIdx + 1;
     while (i < lines.length) {
       const line = lines[i];
-      if (line.startsWith('*') && !/\d/.test(line)) {
-        const next = lines[i + 1] || '';
-        mergedLines.push(line + next);
-        i += 2;
+      if (line.startsWith('*')) {
+        // 提取名称部分（第一个空格前的 *cat*name）和数据部分
+        const starMatch = line.match(/^(\*[^*]+\*[^\s]*)(.*)/);
+        const namePart = starMatch ? starMatch[1] : line;
+        const dataPart = starMatch ? starMatch[2] : '';
+        const dataHasChinese = /[\u4e00-\u9fff]/.test(dataPart);
+        // 若数据部分不含中文（纯数字行），向前看续行并合并
+        if (!dataHasChinese) {
+          let continuation = '';
+          let j = i + 1;
+          while (j < lines.length) {
+            const nxt = lines[j].trim();
+            if (!nxt) { j++; continue; }
+            if (nxt.startsWith('*')) break;
+            if (/合计|价税合计|小计|名称|项目名称/.test(nxt.replace(/\s/g, ''))) break;
+            // 续行条件：不含小数金额、不含税率、不是纯数字行
+            if (/\d+(?:\.\d+)?%/.test(nxt) || /(?<![a-zA-Z])\d+\.\d+/.test(nxt) || /^[\d\s,.]+$/.test(nxt)) break;
+            continuation += nxt;
+            j++;
+          }
+          mergedLines.push(namePart + continuation + dataPart);
+          i = j;
+        } else {
+          mergedLines.push(line);
+          i++;
+        }
       } else {
         mergedLines.push(line);
         i++;
@@ -112,7 +134,8 @@ function extractItemsFromText(text) {
       if (/合计|价税合计|小计/.test(line)) break;
       // 先移除税率列（如 "13%"、"9%"），避免税率数字被误认为金额
       const lineNoRate = line.replace(/\d+(?:\.\d+)?%/g, '');
-      const numParts = lineNoRate.match(/[\d.]+/g) || [];
+      // 按空白分词后保留纯数字 token，排除混合字母+数字的规格字符串（如 400g、12V）
+      const numParts = lineNoRate.split(/\s+/).filter(t => /^[\d,，]+(?:\.\d+)?$/.test(t.trim())).map(t => t.trim()).filter(Boolean);
       const codeMatch = line.match(/\d{19}/);
       const taxCode = codeMatch ? codeMatch[0] : (taxCodes[items.length] || undefined);
       // 中国增值税发票列顺序：数量、单价、金额（不含税）、税额
