@@ -782,3 +782,83 @@ class TestIdenticalNameDifferentAmountLines:
         declared = parser._find_declared_total_from_tables(tables)
         assert declared is not None
         assert abs(declared - 8.81) < 0.01, f"合计行总金额应为 8.81，实际 {declared}"
+
+
+class TestMultilineNameWithInlineData:
+    """修复：*类别*商品名 含行内数据时，后续纯文本续行应被合并到名称中"""
+
+    def test_continuation_lines_merged_when_data_inline(self):
+        """商品名行含行内数字时，后续纯文本续行应合并到完整名称"""
+        parser = PdfInvoiceParser()
+        ocr_lines = [
+            "*日用杂品*德力普 1 76.99 76.99 13% 10.01",
+            "（Delipow）12v锂电池组",
+            "18650锂电池可适用音响",
+            "仪器仪表太阳能灯扩音器",
+            "钓鱼灯玩",
+        ]
+        text = "\n".join(ocr_lines)
+        items = parser._extract_lines_from_text(text)
+        assert len(items) >= 1, "应至少解析出1条明细"
+        full_name = items[0].name
+        assert "（Delipow）" in full_name, (
+            f"续行'（Delipow）12v锂电池组'应被合并到名称中，实际名称: {full_name!r}"
+        )
+        assert abs(items[0].amount - 76.99) < 0.01, (
+            f"金额应为 76.99，实际 {items[0].amount}"
+        )
+
+    def test_continuation_stops_at_next_star_line(self):
+        """遇到下一个 *类别* 行时，续行合并应停止"""
+        parser = PdfInvoiceParser()
+        ocr_lines = [
+            "*日用杂品*德力普 1 76.99 76.99 13% 10.01",
+            "续行文字",
+            "*电力*电费 100 0.80 80.00 13% 10.40",
+        ]
+        text = "\n".join(ocr_lines)
+        items = parser._extract_lines_from_text(text)
+        assert len(items) >= 2, f"应解析出至少2条明细，实际 {len(items)} 条"
+
+    def test_continuation_not_applied_when_data_has_chinese(self):
+        """数据部分含中文时（如规格列已内联），不应进行续行合并"""
+        parser = PdfInvoiceParser()
+        # test1.pdf 格式：规格信息已在名称行内联
+        text = "*经 营 租 赁 *场地租 赁 沪（2019）浦字不 动 产 权 ㎡ 1 2752.29 9% 247.71\n第 114388号"
+        items = parser._extract_lines_from_text(text)
+        assert len(items) >= 1
+        # 续行"第 114388号"不应被合并到名称中（数据部分已含中文"赁"等）
+        assert "114388" not in items[0].name, (
+            f"证书编号不应被合并到名称中，实际名称: {items[0].name!r}"
+        )
+
+
+class TestMeasurementUnitNotAmount:
+    """修复：名称行中的计量单位（如400g、12V）不应被误识别为金额"""
+
+    def test_spec_400g_not_amount(self):
+        """规格列中的400g不应被识别为金额"""
+        parser = PdfInvoiceParser()
+        # 模拟：名称行中规格列含"400g"，实际金额为3.00
+        text = "*食品*饼干 400g 3.00 13% 0.39"
+        items = parser._extract_lines_from_text(text)
+        assert len(items) >= 1, "应至少解析出1条明细"
+        assert abs(items[0].amount - 3.00) < 0.01, (
+            f"金额应为3.00而非400，实际: {items[0].amount}"
+        )
+
+    def test_spec_12v_not_counted_in_quantity(self):
+        """规格列中的12V不应被识别为数量"""
+        parser = PdfInvoiceParser()
+        # *原电池*锂电池 12V2800 个 2 33.46... 66.93 1% 0.67
+        text = "*原电池*锂电池 12V2800 个 2 33.4653465346535 66.93 1% 0.67"
+        items = parser._extract_lines_from_text(text)
+        assert len(items) >= 1, "应至少解析出1条明细"
+        assert abs(items[0].amount - 66.93) < 0.01, (
+            f"金额应为66.93，实际: {items[0].amount}"
+        )
+        # 数量应为2（而不是12，来自12V）
+        if items[0].quantity is not None:
+            assert abs(items[0].quantity - 2.0) < 0.01, (
+                f"数量不应为{items[0].quantity}（来自12V中的12），应为2"
+            )
