@@ -27,6 +27,8 @@ from typing import List, Optional, Union
 _RE_PERCENT = re.compile(r'\d+(?:\.\d+)?%')   # 税率百分比（如"13%"）
 _RE_CURRENCY = re.compile(r'[¥￥]')            # 人民币货币符号
 _RE_RMBORЦNY = re.compile(r'\b(RMB|CNY)\b', re.IGNORECASE)  # 货币名称缩写
+# 规格/单位令牌过滤：含 ASCII 字母的 token（如"400g"、"12V"、"100mAh"）不应被解析为金额/数量
+_RE_ASCII_LETTER = re.compile(r'[a-zA-Z]')
 # Issue 3: 扩展日期格式，增加 YYYYMMDD 纯数字格式（如 20250403，范围 2000-2099 年）
 _RE_DATE = re.compile(
     r'\d{4}(?:年\d{1,2}月\d{1,2}日?|[-/]\d{1,2}[-/]\d{1,2})'
@@ -975,20 +977,33 @@ class PdfInvoiceParser(BaseInvoiceParser):
 
             all_nums = _gather_nums(columns, name_col_idx)
 
-            # 名称行有内容但本行无数值：可能是名称与数值分行，尝试用下一行的数值
-            if not all_nums and ri + 1 < len(all_rows):
-                next_row = all_rows[ri + 1]
-                next_cols = next_row.get("columns", [])
-                # 下一行首列无 *XXX* 名称（避免误合并到下一个商品）
-                has_name_in_next = False
-                for c in next_cols[: min(2, len(next_cols))]:
-                    if c and _re_name_prefix.search(str(c)):
-                        has_name_in_next = True
+            # 名称行有内容但本行无数值：可能是名称与数值分行，尝试向后查找数值行。
+            # 允许中间最多 2 行规格/续行（如"400g"、"1pcs"），向后最多查看 3 行。
+            if not all_nums:
+                _pending: list = []      # row indices between name row and nums row
+                _name_cont: list = []    # text collected from continuation rows
+                for _look_j in range(ri + 1, min(ri + 4, len(all_rows))):
+                    _look_cols = all_rows[_look_j].get("columns", [])
+                    # 发现新商品名称行 → 停止向前看
+                    if any(_re_name_prefix.search(str(c))
+                           for c in _look_cols[: min(2, len(_look_cols))] if c):
                         break
-                if not has_name_in_next:
-                    all_nums = _gather_nums(next_cols, -1)  # 从第 0 列开始收集
-                    if all_nums:
-                        consumed_next.add(ri + 1)
+                    _look_nums = _gather_nums(_look_cols, -1)
+                    if _look_nums:
+                        all_nums = _look_nums
+                        # 消耗所有中间续行及数值行
+                        for _k in _pending:
+                            consumed_next.add(_k)
+                        consumed_next.add(_look_j)
+                        # 将续行文字合并进名称（如"400g"、"（礼盒装）"）
+                        if _name_cont:
+                            name_val = name_val + "".join(_name_cont)
+                        break
+                    # 无数值 → 视为规格/续行，收集文字并继续向前看
+                    _cont_text = "".join(c.strip() for c in _look_cols if c.strip())
+                    if _cont_text:
+                        _name_cont.append(_cont_text)
+                    _pending.append(_look_j)
 
             if not all_nums:
                 continue
@@ -1388,6 +1403,11 @@ class PdfInvoiceParser(BaseInvoiceParser):
         parts = re.split(r"\s+", cleaned)
         result = []
         for p in parts:
+            # Skip tokens that still contain ASCII letters after currency/percent removal.
+            # These are alphanumeric spec/unit tokens (e.g. "400g", "12V", "100mAh") that
+            # should not be treated as monetary amounts or quantities.
+            if _RE_ASCII_LETTER.search(p):
+                continue
             p = re.sub(r"[^\d.\-]", "", p)
             if not p:
                 continue

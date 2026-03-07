@@ -862,3 +862,99 @@ class TestMeasurementUnitNotAmount:
             assert abs(items[0].quantity - 2.0) < 0.01, (
                 f"数量不应为{items[0].quantity}（来自12V中的12），应为2"
             )
+
+
+class TestOcrStructuredSpec400g:
+    """修复：OCR结构化路径中，规格列（400g等）不应被误识别为数量/金额，且名称跨行时应正确合并"""
+
+    def test_spec_400g_inline_col_not_quantity(self):
+        """同行内规格列'400g'不应被识别为数量（应为实际数量=1）"""
+        parser = PdfInvoiceParser()
+        structured = [
+            {
+                "page": 1,
+                "rows": [
+                    {
+                        "columns": ["*日用杂品*德力普12V锂电池", "400g", "1", "2", "76.99", "76.99", "13%", "10.01"],
+                        "y_center": 100,
+                        "words": [],
+                    }
+                ],
+                "full_text": "",
+            }
+        ]
+        items = parser._extract_lines_from_ocr_structured(structured)
+        assert len(items) >= 1, "应至少解析出1条明细"
+        # 金额应为 76.99，不应为 400（来自 400g）
+        assert abs(items[0].amount - 76.99) < 0.01, (
+            f"金额应为76.99，不应为400（来自400g），实际: {items[0].amount}"
+        )
+        # 数量不应为 400（来自 400g）
+        if items[0].quantity is not None:
+            assert items[0].quantity != 400.0, (
+                f"数量不应为400（来自400g），实际: {items[0].quantity}"
+            )
+
+    def test_spec_400g_separate_row_amount_correct(self):
+        """OCR将规格'400g'单独分行时，应向后查找数值行，金额应正确"""
+        parser = PdfInvoiceParser()
+        structured = [
+            {
+                "page": 1,
+                "rows": [
+                    {"columns": ["*日用杂品*德力普12V锂电池"], "y_center": 100, "words": []},
+                    {"columns": ["400g"], "y_center": 115, "words": []},
+                    {"columns": ["1", "2", "76.99", "76.99", "13%", "10.01"], "y_center": 130, "words": []},
+                ],
+                "full_text": "",
+            }
+        ]
+        items = parser._extract_lines_from_ocr_structured(structured)
+        assert len(items) >= 1, "应至少解析出1条明细（'400g'行后的数值行被正确关联）"
+        # 金额应为 76.99，不应为 400
+        assert abs(items[0].amount - 76.99) < 0.01, (
+            f"金额应为76.99，实际: {items[0].amount}"
+        )
+
+    def test_spec_row_merged_into_name(self):
+        """OCR规格行（400g）应被合并进商品名称"""
+        parser = PdfInvoiceParser()
+        structured = [
+            {
+                "page": 1,
+                "rows": [
+                    {"columns": ["*日用杂品*德力普12V锂电池"], "y_center": 100, "words": []},
+                    {"columns": ["400g"], "y_center": 115, "words": []},
+                    {"columns": ["1", "76.99", "76.99", "13%", "10.01"], "y_center": 130, "words": []},
+                ],
+                "full_text": "",
+            }
+        ]
+        items = parser._extract_lines_from_ocr_structured(structured)
+        assert len(items) >= 1, "应至少解析出1条明细"
+        # 名称应包含 '400g'（已从规格行合并）
+        assert "400g" in items[0].name, (
+            f"规格'400g'应被合并进名称，实际名称: {items[0].name!r}"
+        )
+
+    def test_multiple_items_with_spec_rows(self):
+        """多商品场景：含规格行的商品与普通商品均应正确解析"""
+        parser = PdfInvoiceParser()
+        structured = [
+            {
+                "page": 1,
+                "rows": [
+                    {"columns": ["*日用杂品*德力普12V锂电池"], "y_center": 100, "words": []},
+                    {"columns": ["400g"], "y_center": 115, "words": []},
+                    {"columns": ["1", "76.99", "76.99", "13%", "10.01"], "y_center": 130, "words": []},
+                    {"columns": ["*电子*AA电池"], "y_center": 150, "words": []},
+                    {"columns": ["5", "7.50", "37.50", "9%", "3.38"], "y_center": 165, "words": []},
+                ],
+                "full_text": "",
+            }
+        ]
+        items = parser._extract_lines_from_ocr_structured(structured)
+        assert len(items) >= 2, f"应解析出2条明细，实际: {len(items)}"
+        amounts = sorted(item.amount for item in items)
+        assert abs(amounts[0] - 37.50) < 0.01, f"第一条金额应为37.50，实际: {amounts[0]}"
+        assert abs(amounts[1] - 76.99) < 0.01, f"第二条金额应为76.99，实际: {amounts[1]}"
