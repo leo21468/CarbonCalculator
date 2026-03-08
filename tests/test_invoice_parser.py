@@ -1050,3 +1050,111 @@ class TestWeightSpecNotAmount:
         # 关键：金额必须是 9.80，而非 0.98（税额）或 250（错误解析）
         assert abs(items[0].amount - 0.98) > 0.01, "amount 不应为税额 0.98"
         assert abs(items[0].amount - 250) > 0.01, "amount 不应为整数 250"
+
+
+class TestOcrPaddleVersion:
+    """测试 PdfInvoiceParser._run_ocr_on_image 兼容 PaddleOCR 2.x 和 3.x 结果格式"""
+
+    def test_run_ocr_on_image_3x_format(self):
+        """PaddleOCR 3.x：OCRResult dict 对象应被正确转换为旧版 [[bbox, (text, score)], ...] 格式"""
+        from src.invoice_parser import PdfInvoiceParser
+
+        class FakeOCRResult:
+            """模拟 PaddleOCR 3.x OCRResult（类字典对象）"""
+            def __init__(self):
+                self._data = {
+                    'rec_polys': [[[0, 0], [10, 0], [10, 10], [0, 10]]],
+                    'rec_texts': ['502强力胶'],
+                    'rec_scores': [0.99],
+                }
+            def __getitem__(self, key):
+                return self._data[key]
+            def get(self, key, default=None):
+                return self._data.get(key, default)
+
+        class FakeOCR:
+            def predict(self, img):
+                return [FakeOCRResult()]
+
+        ocr = FakeOCR()
+        items = PdfInvoiceParser._run_ocr_on_image(ocr, None)
+        assert len(items) == 1, f"应返回 1 条结果，实际: {len(items)}"
+        assert items[0][1][0] == '502强力胶', f"文字应为 '502强力胶'，实际: {items[0][1][0]}"
+        assert abs(items[0][1][1] - 0.99) < 0.01, f"置信度应为 0.99，实际: {items[0][1][1]}"
+
+    def test_run_ocr_on_image_2x_format(self):
+        """PaddleOCR 2.x：ocr() 返回嵌套列表，应直接透传"""
+        from src.invoice_parser import PdfInvoiceParser
+
+        class FakeOCR:
+            def predict(self, img):
+                # 返回列表格式（旧版兼容）
+                return [[
+                    [[[0,0],[10,0],[10,10],[0,10]], ('502强力胶', 0.99)],
+                ]]
+
+        ocr = FakeOCR()
+        items = PdfInvoiceParser._run_ocr_on_image(ocr, None)
+        assert len(items) == 1
+        assert items[0][1][0] == '502强力胶'
+
+    def test_run_ocr_empty_result(self):
+        """OCR 返回空结果时，_run_ocr_on_image 应返回空列表"""
+        from src.invoice_parser import PdfInvoiceParser
+
+        class FakeOCR:
+            def predict(self, img):
+                return []
+
+        ocr = FakeOCR()
+        items = PdfInvoiceParser._run_ocr_on_image(ocr, None)
+        assert items == []
+
+
+class TestUnitWithNumberNotAmount:
+    """修复：OCR 将单位 'M³' 等含数字单位拆成字母行+数字行时，数字不应被误认为金额"""
+
+    def test_unit_letter_prefix_merged_with_number(self):
+        """'M'（名称续行）+ '3'（数字）应被合并为 'M3' 写入名称，而非将 '3' 加入 plain_numbers"""
+        from src.invoice_parser import PdfInvoiceParser
+        parser = PdfInvoiceParser()
+        # OCR 将 "M³" 拆成 "M" 和 "3" 两行，"9.00" 为实际金额
+        raw_lines = [
+            "某产品",
+            "M",     # 单位字母前缀
+            "3",     # 单位数字后缀 → 应与 "M" 合并为 "M3" 写入名称
+            "9.00",  # 实际金额
+        ]
+        items = parser._extract_from_ocr_blocks(raw_lines)
+        assert len(items) >= 1, "应能解析出商品"
+        assert abs(items[0].amount - 9.00) < 0.01, (
+            f"金额应为 9.00（'3' 是单位后缀，不是金额），实际为 {items[0].amount}"
+        )
+        # 名称应包含 "M3"（已从字母+数字合并）
+        assert "M3" in items[0].name, (
+            f"名称应包含合并后的单位 'M3'，实际名称: {items[0].name!r}"
+        )
+
+    def test_three_nums_qty_unitprice_amount_pattern1(self):
+        """Pattern 1：三个数字且最后一个 ≈ 前两个之积时，取最后一个为金额"""
+        from src.invoice_parser import PdfInvoiceParser
+        parser = PdfInvoiceParser()
+        # 100 件 × 0.09 元/件 = 9.00 元
+        text = "*螺丝*螺丝 100 0.09 9.00"
+        items = parser._extract_lines_from_text(text)
+        assert len(items) >= 1, "应至少解析出1条明细"
+        assert abs(items[0].amount - 9.00) < 0.01, (
+            f"金额应为 9.00（qty×unit_price=amount），实际: {items[0].amount}"
+        )
+
+    def test_three_nums_default_second_to_last_pattern1(self):
+        """Pattern 1：三个数字，不满足 qty×unit_price=amount 关系时，仍取倒数第二为金额"""
+        from src.invoice_parser import PdfInvoiceParser
+        parser = PdfInvoiceParser()
+        # 格式：单价 80.00，金额 160.00，税额 14.40（非整数关系）
+        text = "*电力*电费 80.00 160.00 14.40"
+        items = parser._extract_lines_from_text(text)
+        assert len(items) >= 1, "应至少解析出1条明细"
+        assert abs(items[0].amount - 160.00) < 0.01, (
+            f"金额应为 160.00（倒数第二个），实际: {items[0].amount}"
+        )
