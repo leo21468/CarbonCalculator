@@ -20,6 +20,12 @@
 
   function $(id) { return document.getElementById(id); }
 
+  function escapeHtml(s) {
+    if (s == null || s === '') return '';
+    const t = String(s);
+    return t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
   // ─── Toast 通知系统 ───────────────────────────────────────
   const Toast = {
     show(msg, type = 'info', duration = 3000) {
@@ -296,7 +302,8 @@
         html += '<table class="category-table"><tr><th>名称</th><th>范围</th><th>匹配方式</th><th>金额</th><th>排放(kg)</th></tr>';
         for (const l of data.lines) {
           const nameOneLine = (l.name || '').replace(/\s+/g, ' ').trim();
-          html += `<tr><td>${nameOneLine}</td>
+          const nameSafe = escapeHtml(nameOneLine);
+          html += `<tr><td class="name-cell" title="${nameSafe}">${nameSafe}</td>
             <td><span class="scope-tag ${scopeClass(l.scope)}">${l.scope}</span></td>
             <td>${l.match_type}</td><td>¥${l.amount}</td><td>${l.emission_kg}</td></tr>`;
         }
