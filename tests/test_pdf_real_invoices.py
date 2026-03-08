@@ -52,6 +52,15 @@ def test_real_invoice_parses_correctly(pdf_file):
     # 至少 1 条明细行
     assert len(invoice.lines) >= 1, f"{pdf_file.name}: 应至少有 1 条明细行"
 
+    # 物体名称必须已合并为单行（不含换行符）
+    for line in invoice.lines:
+        assert "\n" not in (line.name or ""), (
+            f"{pdf_file.name}: 明细名称不应含换行符，应已合并为一行。实际 name={line.name!r}"
+        )
+        assert "\r" not in (line.name or ""), (
+            f"{pdf_file.name}: 明细名称不应含回车符。实际 name={line.name!r}"
+        )
+
     # 所有明细 amount > 0
     for line in invoice.lines:
         assert line.amount > 0, (
