@@ -78,6 +78,28 @@ def _is_spec_or_dimension_line(s: str) -> bool:
     return False
 
 
+def _is_simple_weight_volume_spec(s: str) -> bool:
+    """纯重量/体积规格（如 840g、320g、1.25kg、2L），可并入商品名称。"""
+    if not s or not isinstance(s, str):
+        return False
+    t = s.strip()
+    if len(t) > 15:
+        return False
+    return bool(re.match(r"^\d+(?:\.\d+)?\s*(?:克|千克|g|kg|ml|L)$", t, re.IGNORECASE))
+
+
+def _is_certificate_or_property_line(s: str) -> bool:
+    """证照/产权类文字（沪（2019）浦字、不动产、产权、证、㎡），不应并入商品名称。"""
+    if not s or not isinstance(s, str):
+        return False
+    t = s.strip()
+    if any(kw in t for kw in ("不动产", "产权", "浦字", "沪（", "㎡", "证号", "权证")):
+        return True
+    if re.search(r"沪\s*[（(]\s*\d{4}\s*[)）]", t):
+        return True
+    return False
+
+
 def _is_valid_star_category_name(name: str) -> bool:
     """名称是否以有效的 *类别* 开头（才算作物体的名称）。
 
@@ -204,11 +226,23 @@ def _seller_from_dict(d: dict) -> SellerInfo:
 
 
 def _normalize_name_single_line(name: str) -> str:
-    """将多行名称合并为一行，并去掉末尾的规格/单位词。"""
+    """将多行名称合并为一行，并去掉末尾的规格/单位词及证照/产权后缀。"""
     if not name:
         return ""
     s = " ".join(str(name).split()).strip()
+    s = _strip_certificate_suffix(s)
     return _drop_trailing_spec_unit_from_name(s) or s
+
+
+def _strip_certificate_suffix(name: str) -> str:
+    """从名称末尾去掉证照/产权类文字（沪（2019）浦字、不动产、产权、㎡ 等）。"""
+    if not name or len(name) < 6:
+        return name
+    for sep in ("沪（", "沪(", "浦字", "不动产", "产权", "㎡"):
+        idx = name.find(sep)
+        if idx > 5:
+            return name[:idx].strip()
+    return name
 
 
 def _drop_trailing_spec_unit_from_name(name: str) -> str:
@@ -837,11 +871,16 @@ class PdfInvoiceParser(BaseInvoiceParser):
                         # 遇到新 *类别* 则停止合并
                         if _is_valid_star_category_name(next_name):
                             break
-                        # 单位、规格/尺寸行不并入名称，单独成列
-                        if _is_unit_only_line(next_name) or _is_spec_or_dimension_line(next_name):
+                        # 单位、规格/尺寸行不并入名称，单独成列（重量/体积如 840g 可并入）
+                        if _is_unit_only_line(next_name):
+                            break
+                        if _is_spec_or_dimension_line(next_name) and not _is_simple_weight_volume_spec(next_name):
                             break
                         # 屏蔽无关信息：合计/购方/销方/发票等非商品行
                         if any(kw in next_name for kw in _INVOICE_NON_ITEM_KEYWORDS):
+                            break
+                        # 证照/产权类（沪（2019）浦字、不动产、产权、㎡）不并入名称
+                        if _is_certificate_or_property_line(next_name):
                             break
                         # 单行过长视为备注/地址等，不合并
                         if len(next_name.strip()) > 50:
@@ -1227,6 +1266,13 @@ class PdfInvoiceParser(BaseInvoiceParser):
             if any(kw in name_val for kw in _INVOICE_NON_ITEM_KEYWORDS):
                 continue
 
+            # 同一行后续列中若有纯重量/体积规格（如 840g、1.25kg），并入名称
+            for _ci in range(name_col_idx + 1, min(name_col_idx + 3, len(columns))):
+                _cell = (columns[_ci] or "").strip()
+                if _cell and _is_simple_weight_volume_spec(_cell):
+                    name_val = name_val + _cell
+                    break
+
             # 收集数值列（start 为名称列索引，-1 表示从第 0 列起）
             def _gather_nums(cols: list, start: int) -> list:
                 out = []
@@ -1333,7 +1379,11 @@ class PdfInvoiceParser(BaseInvoiceParser):
                     break
                 if any(kw in _next_name for kw in _INVOICE_NON_ITEM_KEYWORDS):
                     break
-                if _is_unit_only_line(_next_name) or _is_spec_or_dimension_line(_next_name):
+                if _is_certificate_or_property_line(_next_name):
+                    break
+                if _is_unit_only_line(_next_name):
+                    break
+                if _is_spec_or_dimension_line(_next_name) and not _is_simple_weight_volume_spec(_next_name):
                     break
                 _next_nums = _gather_nums(_next_cols, name_col_idx)
                 _next_nums = [n for n in _next_nums if 0 < n <= _MAX_REASONABLE_AMOUNT_CNY]
