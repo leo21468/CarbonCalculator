@@ -4,10 +4,16 @@
 """
 from __future__ import annotations
 import os
+from pathlib import Path
 from fastapi import APIRouter, HTTPException, UploadFile, File, Body
 
 from src.models import Scope
-from src.invoice_parser import _normalize_name_single_line
+from src.invoice_parser import (
+    _normalize_name_single_line,
+    PdfInvoiceParser,
+    parse_invoice_from_xml,
+    parse_invoice_from_ofd,
+)
 
 from backend.database import (
     add_invoice_categories_batch, list_invoice_categories,
@@ -15,6 +21,28 @@ from backend.database import (
 )
 
 router = APIRouter(prefix="/api/invoice", tags=["invoices"])
+
+
+def _get_emission_data_source_label(pipeline) -> str:
+    """返回当前流水线使用的排放范围映射数据来源名称。"""
+    try:
+        mapper = pipeline.classifier.mapper
+        ref_db = getattr(mapper, "_ref_db", None)
+        ref_table = getattr(mapper, "_ref_table", None)
+        if ref_db and Path(ref_db).exists():
+            return f"范围映射表（{Path(ref_db).name}）"
+        if ref_table and Path(ref_table).exists():
+            return f"范围映射表（{Path(ref_table).name}）"
+    except Exception:
+        pass
+    return "范围映射表（tax_code_to_scope 等）"
+
+
+def _line_emission_data_source(cl, mapper_source_label: str) -> str:
+    """单条明细的碳排放数据来源。"""
+    if cl.emission_factor_id and cl.emission_factor_id != "scope3_default":
+        return mapper_source_label
+    return "默认因子表（emission_factors.csv）"
 
 
 def _get_pipeline():
@@ -26,33 +54,37 @@ def _get_pipeline():
 
 @router.post(
     "/upload",
-    summary="上传发票（PDF）",
-    description="上传 PDF 格式的发票文件，解析明细、分类至 Scope 1/2/3 并存入数据库，返回分类结果及排放核算摘要。",
+    summary="上传发票（PDF / OFD / XML）",
+    description="上传 PDF、OFD 或 XML 格式的发票文件，解析明细、分类至 Scope 1/2/3 并存入数据库，返回分类结果及排放核算摘要。",
 )
 async def upload_invoice(file: UploadFile = File(...)):
-    """上传 PDF 发票文件，解析发票明细、分类并记录类别统计到数据库。"""
+    """上传发票文件（PDF、OFD 或 XML），解析发票明细、分类并记录类别统计到数据库。"""
     if not file.filename:
         raise HTTPException(status_code=400, detail="请上传文件")
     ext = os.path.splitext(file.filename.lower())[1]
-    if ext != ".pdf":
-        raise HTTPException(status_code=400, detail="仅支持 PDF 格式的发票文件")
+    if ext not in (".pdf", ".xml", ".ofd"):
+        raise HTTPException(status_code=400, detail="仅支持 PDF、OFD 和 XML 格式的发票文件")
 
     content = await file.read()
     if not content:
         raise HTTPException(status_code=400, detail="文件内容为空")
 
-    from src.invoice_parser import PdfInvoiceParser
-
-    parser = PdfInvoiceParser()
-    try:
-        invoice = parser.parse(content)
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"PDF 解析失败：{e}")
+    if ext == ".pdf":
+        parser = PdfInvoiceParser()
+        try:
+            invoice = parser.parse(content)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"PDF 解析失败：{e}")
+    elif ext == ".xml":
+        invoice = parse_invoice_from_xml(content)
+    else:
+        invoice = parse_invoice_from_ofd(content)
 
     if not invoice.lines:
         raise HTTPException(status_code=400, detail="未能从文件中提取到发票明细行")
 
     pipeline = _get_pipeline()
+    mapper_source_label = _get_emission_data_source_label(pipeline)
     result = pipeline.process_invoice(invoice, ref_invoice_id=invoice.invoice_number)
     classified = result.get("classified", [])
 
@@ -93,6 +125,7 @@ async def upload_invoice(file: UploadFile = File(...)):
             "amount": cl.line.amount,
             "emission_kg": round(emission_kg, 4),
             "tax_code": cl.matched_tax_code,
+            "emission_data_source": _line_emission_data_source(cl, mapper_source_label),
         }
         for cl, emission_kg in zip(classified, per_item_emissions)
     ]
@@ -120,6 +153,7 @@ def process_invoice_json(body: dict = Body(...)):
     if not body:
         raise HTTPException(status_code=400, detail="请求体不能为空")
     pipeline = _get_pipeline()
+    mapper_source_label = _get_emission_data_source_label(pipeline)
     try:
         result = pipeline.process_invoice_from_dict(body)
     except Exception as e:
@@ -170,6 +204,7 @@ def process_invoice_json(body: dict = Body(...)):
             "amount": cl.line.amount,
             "emission_kg": round(emission_kg, 4),
             "tax_code": cl.matched_tax_code,
+            "emission_data_source": _line_emission_data_source(cl, mapper_source_label),
         }
         for cl, emission_kg in zip(classified, per_item_emissions)
     ]

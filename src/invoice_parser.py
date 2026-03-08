@@ -293,6 +293,99 @@ def _build_invoice_from_dict(data: dict) -> Invoice:
     return inv
 
 
+def parse_invoice_from_xml(content: bytes) -> "Invoice":
+    """从 XML 字节流解析发票。支持 <Invoice><lines><item><name/><amount/></item></lines></Invoice> 及常见增值税 XML 节点。"""
+    import xml.etree.ElementTree as ET
+    from .models import Invoice, InvoiceLineItem, SellerInfo
+
+    inv = Invoice(source_format="XML")
+    try:
+        root = ET.fromstring(content)
+    except ET.ParseError:
+        return inv
+
+    def find_text(parent, *tags):
+        for t in tags:
+            e = parent.find(t)
+            if e is not None and e.text and e.text.strip():
+                return e.text.strip()
+        for c in parent.iter():
+            local = c.tag.split("}")[-1] if "}" in c.tag else c.tag
+            if local in tags and c.text and c.text.strip():
+                return c.text.strip()
+        return None
+
+    def find_all_items(parent):
+        for tag in ("lines", "items", "FPMX", "FPDetail"):
+            container = parent.find(tag)
+            if container is not None:
+                return list(container) or []
+        return []
+
+    inv.invoice_number = find_text(root, "invoice_number", "number")
+    inv.invoice_code = find_text(root, "invoice_code")
+    inv.date = find_text(root, "date")
+    seller_name = None
+    se = root.find("seller")
+    if se is not None:
+        name_el = se.find("name")
+        if name_el is not None and name_el.text and name_el.text.strip():
+            seller_name = name_el.text.strip()
+    if not seller_name:
+        seller_name = find_text(root, "seller", "xfmc", "sellerName")
+    if seller_name:
+        inv.seller = SellerInfo(name=seller_name)
+    total = find_text(root, "total_amount")
+    if total:
+        try:
+            inv.total_amount = float(total)
+        except (ValueError, TypeError):
+            pass
+
+    for node in find_all_items(root):
+        tag = node.tag.split("}")[-1] if "}" in node.tag else node.tag
+        if tag not in ("item", "Item", "Goods", "row", "FPMX"):
+            continue
+        name = find_text(node, "name", "spmc", "xmmc")
+        if not name:
+            continue
+        amount_s = find_text(node, "amount", "je")
+        amount = 0.0
+        if amount_s:
+            try:
+                amount = float(amount_s)
+            except (ValueError, TypeError):
+                pass
+        tax_code = find_text(node, "tax_classification_code", "spbm")
+        inv.lines.append(InvoiceLineItem(name=name, tax_classification_code=tax_code, amount=amount))
+    if inv.lines and not inv.total_amount:
+        inv.total_amount = sum(l.amount for l in inv.lines)
+    return inv
+
+
+def parse_invoice_from_ofd(content: bytes) -> "Invoice":
+    """从 OFD（ZIP）字节流解析发票，查找包内发票 XML 并解析。"""
+    import zipfile
+    import io
+    inv = Invoice(source_format="OFD")
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(content), "r")
+    except zipfile.BadZipFile:
+        return inv
+    for name in (n for n in zf.namelist() if n.endswith(".xml") and "__MACOSX" not in n):
+        try:
+            raw = zf.read(name)
+            if b"invoice_number" in raw or b"Invoice" in raw or b"lines" in raw or b"FPMX" in raw:
+                sub = parse_invoice_from_xml(raw)
+                if sub.lines or sub.invoice_number:
+                    zf.close()
+                    return sub
+        except Exception:
+            continue
+    zf.close()
+    return inv
+
+
 class PdfInvoiceParser(BaseInvoiceParser):
     """
     从 PDF 电子发票中提取结构化数据。

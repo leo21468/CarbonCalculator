@@ -202,8 +202,9 @@
       }
       const tag = data.source === 'custom' ? 'custom' : 'cpcd';
       const sc = scopeClass(data.carbon_type);
+      const sourceLabel = data.source === 'custom' ? '自定义产品库' : (data.source === 'cpcd' ? 'CPCD 碳足迹库' : (data.source || '未匹配'));
       const rows = [
-        ['来源', `<span class="source-tag ${tag}">${data.source === 'custom' ? '自定义' : 'CPCD'}</span>`],
+        ['数据来源', `<span class="source-tag ${tag}">${sourceLabel}</span>`],
         ['产品名称', data.product_name],
         ['碳种类', `<span class="scope-tag ${sc}">${data.carbon_type}</span>`],
         ['碳足迹', data.carbon_footprint || '-'],
@@ -299,13 +300,14 @@
         }
       }
       if (data.lines && data.lines.length) {
-        html += '<table class="category-table"><tr><th>名称</th><th>范围</th><th>匹配方式</th><th>金额</th><th>排放(kg)</th></tr>';
+        html += '<table class="category-table"><tr><th>名称</th><th>范围</th><th>匹配方式</th><th>金额</th><th>排放(kg)</th><th>数据来源</th></tr>';
         for (const l of data.lines) {
           const nameOneLine = (l.name || '').replace(/\s+/g, ' ').trim();
           const nameSafe = escapeHtml(nameOneLine);
+          const dataSource = l.emission_data_source || '-';
           html += `<tr><td class="name-cell" title="${nameSafe}">${nameSafe}</td>
             <td><span class="scope-tag ${scopeClass(l.scope)}">${l.scope}</span></td>
-            <td>${l.match_type}</td><td>¥${l.amount}</td><td>${l.emission_kg}</td></tr>`;
+            <td>${l.match_type}</td><td>¥${l.amount}</td><td>${l.emission_kg}</td><td class="data-source-cell" title="${escapeHtml(dataSource)}">${escapeHtml(dataSource)}</td></tr>`;
         }
         html += '</table>';
         html += `<button class="secondary" style="margin-top:0.75rem;" id="btnExportInvoice">导出 CSV</button>`;
@@ -316,8 +318,8 @@
       if (btn) {
         btn.addEventListener('click', () => {
           exportCSV(
-            data.lines.map(l => [(l.name || '').replace(/\s+/g, ' ').trim(), l.scope, l.match_type, l.amount, l.emission_kg, l.tax_code || '']),
-            ['名称', '范围', '匹配方式', '金额', '排放(kg)', '税收编码'],
+            data.lines.map(l => [(l.name || '').replace(/\s+/g, ' ').trim(), l.scope, l.match_type, l.amount, l.emission_kg, l.tax_code || '', l.emission_data_source || '']),
+            ['名称', '范围', '匹配方式', '金额', '排放(kg)', '税收编码', '数据来源'],
             'invoice_result.csv'
           );
         });
