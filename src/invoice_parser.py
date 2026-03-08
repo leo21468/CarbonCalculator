@@ -46,6 +46,32 @@ _RE_UNIT_TOKEN = re.compile(r'^[a-zA-Z]{1,6}$')
 # 中文单位单字/短词（OCR 常将「9元」「14队」拆成两行），与数字同行或下一行时合并进名称、不作为金额
 _RE_CN_UNIT = re.compile(r'^[元队型瓶个只支盒包袋箱桶罐条张本台件套号克升度块根卷组副双听]$')
 
+# 判断是否为「仅单位」或「仅规格/尺寸」行——这类行不应并入商品名称，应单独成列/行
+def _is_unit_only_line(s: str) -> bool:
+    """整行仅为单位（个、支、盒、元等）时返回 True，不应并入名称。"""
+    if not s or not isinstance(s, str):
+        return False
+    t = s.strip()
+    if len(t) > 6:
+        return False
+    return bool(_RE_CN_UNIT.match(t)) or t.lower() in ("kg", "g", "ml", "l", "pcs", "pc", "set", "box")
+
+
+def _is_spec_or_dimension_line(s: str) -> bool:
+    """整行像规格/尺寸（M6、400g、8*22、规格 xxx）时返回 True，不应并入名称。"""
+    if not s or not isinstance(s, str):
+        return False
+    t = s.strip()
+    if len(t) > 30:
+        return False
+    if t.startswith("规格") or "规格" in t:
+        return True
+    if re.match(r"^[A-Za-z]?\d+(?:\.\d+)?[A-Za-z]*$", t):
+        return True
+    if re.match(r"^\d+\s*\*\s*\d+", t) or re.match(r"^\d+\s*\*\s*\d+\s*\*\s*\d+", t):
+        return True
+    return False
+
 
 def _is_valid_star_category_name(name: str) -> bool:
     """名称是否以有效的 *类别* 开头（才算作物体的名称）。
@@ -517,9 +543,18 @@ class PdfInvoiceParser(BaseInvoiceParser):
         ocr_structured = []
         text_from_ocr = False  # 当前 all_text 是否来自 OCR（纯图片/扫描 PDF）
 
-        # 纯图片/扫描版 PDF：无文本或文本过短时使用 OCR（部分 PDF 会提取到极少元数据字符，仍无法得到明细）
+        # 纯图片/扫描版 PDF：无文本或文本过短时使用 OCR；或表格为空且文本较短时也尝试 OCR
         _MIN_TEXT_LEN_FOR_OCR = 80
+        _MAX_TEXT_WHEN_NO_TABLES = 400
         if not all_text.strip() or len(all_text.strip()) < _MIN_TEXT_LEN_FOR_OCR:
+            try:
+                ocr_text, ocr_structured = self._ocr_pdf(pdf)
+                if ocr_text.strip():
+                    all_text = ocr_text
+                    text_from_ocr = True
+            except Exception:
+                pass
+        elif not all_tables and len(all_text.strip()) < _MAX_TEXT_WHEN_NO_TABLES:
             try:
                 ocr_text, ocr_structured = self._ocr_pdf(pdf)
                 if ocr_text.strip():
@@ -757,6 +792,8 @@ class PdfInvoiceParser(BaseInvoiceParser):
                             continue
                         if _is_valid_star_category_name(prev_name):
                             break
+                        if _is_unit_only_line(prev_name) or _is_spec_or_dimension_line(prev_name):
+                            break
                         if any(kw in prev_name for kw in _INVOICE_NON_ITEM_KEYWORDS):
                             break
                         if len(prev_name.strip()) > 50:
@@ -782,6 +819,9 @@ class PdfInvoiceParser(BaseInvoiceParser):
                             continue
                         # 遇到新 *类别* 则停止合并
                         if _is_valid_star_category_name(next_name):
+                            break
+                        # 单位、规格/尺寸行不并入名称，单独成列
+                        if _is_unit_only_line(next_name) or _is_spec_or_dimension_line(next_name):
                             break
                         # 屏蔽无关信息：合计/购方/销方/发票等非商品行
                         if any(kw in next_name for kw in _INVOICE_NON_ITEM_KEYWORDS):
@@ -826,8 +866,9 @@ class PdfInvoiceParser(BaseInvoiceParser):
                     if _is_valid_star_category_name(name):
                         pending_name_parts = [name.strip()]
                     elif pending_name_parts:
-                        # 续行：不以 * 开头或 * 之间是尺寸，则拼到当前物体名后
-                        pending_name_parts.append(name.strip())
+                        # 续行：不以 * 开头；单位/规格行不拼入名称
+                        if not _is_unit_only_line(name) and not _is_spec_or_dimension_line(name):
+                            pending_name_parts.append(name.strip())
 
         return lines
 
@@ -867,6 +908,9 @@ class PdfInvoiceParser(BaseInvoiceParser):
                     # 另一个 *XX*YY 格式行 → 新商品，停止合并
                     if nxt.startswith("*"):
                         break
+                    # 单位、规格行不并入名称
+                    if _is_unit_only_line(nxt) or _is_spec_or_dimension_line(nxt):
+                        break
                     # 名称续行：不是纯数字/货币行、不是税率、不含新 *类别* 格式、长度≤50（与表格路径一致）
                     # 允许含数字的续行（如型号 500g、100mAh）
                     if (not _pure_num_re.match(nxt)
@@ -885,6 +929,8 @@ class PdfInvoiceParser(BaseInvoiceParser):
                 while merged_lines:
                     last = (merged_lines[-1] or "").strip()
                     if not last or last.startswith("*") or len(last) > 50:
+                        break
+                    if _is_unit_only_line(last) or _is_spec_or_dimension_line(last):
                         break
                     if re.search(r"\d+\.\d+", last) or any(kw in last for kw in _INVOICE_NON_ITEM_KEYWORDS):
                         break
@@ -911,6 +957,8 @@ class PdfInvoiceParser(BaseInvoiceParser):
                                     j += 1
                                     continue
                                 if nxt.startswith("*"):
+                                    break
+                                if _is_unit_only_line(nxt) or _is_spec_or_dimension_line(nxt):
                                     break
                                 # 检查关键词时同时考虑含空格的变体（如"合 计"→"合计"）
                                 nxt_nospace = nxt.replace(' ', '')
@@ -1189,10 +1237,10 @@ class PdfInvoiceParser(BaseInvoiceParser):
                         if _name_cont:
                             name_val = name_val + "".join(_name_cont)
                         break
-                    # 无数值 → 视为规格/续行，收集文字并继续向前看
                     _cont_text = "".join(c.strip() for c in _look_cols if c.strip())
                     if _cont_text:
-                        _name_cont.append(_cont_text)
+                        if not _is_unit_only_line(_cont_text) and not _is_spec_or_dimension_line(_cont_text):
+                            _name_cont.append(_cont_text)
                     _pending.append(_look_j)
 
             if not all_nums:
@@ -1290,15 +1338,17 @@ class PdfInvoiceParser(BaseInvoiceParser):
         tax_rate_pat = re.compile(r'^\s*\d+(?:\.\d+)?%\s*$')
         currency_pat = re.compile(r'^\s*[¥￥][\d,]+(?:\.\d+)?\s*$')
         # Name continuation: not a pure number/currency/tax-rate, not a new *cat* line,
-        # at most 20 chars. Handles "500g", "100mAh", "A型", etc.
+        # at most 50 chars; 单位/规格行不当作名称续行（应单独成列/行）
         def is_name_continuation(s: str) -> bool:
             return (
                 not bare_number_pat.match(s)
                 and not tax_rate_pat.match(s)
                 and not currency_pat.match(s)
-                and len(s) <= 20
+                and len(s) <= 50
                 and not re.search(r'\*+[^*]+\*+', s)
                 and not any(kw in s for kw in _INVOICE_NON_ITEM_KEYWORDS)
+                and not _is_unit_only_line(s)
+                and not _is_spec_or_dimension_line(s)
             )
 
         def has_reasonable_decimals(v: float) -> bool:
@@ -1343,22 +1393,20 @@ class PdfInvoiceParser(BaseInvoiceParser):
                             name_parts[-1] = name_parts[-1].strip() + nxt.strip()
                             j += 1
                             continue
-                        # Lookahead: if the next non-empty line is a pure ASCII unit string
-                        # (e.g. "kg", "g", "ml"), the current number is a weight/volume
-                        # specification, not a monetary amount.  Combine as name continuation.
-                        # Example: OCR splits "1.25kg" into "1.25" (this line) + "kg" (next line).
+                        # 下一行是单位（个、kg、元、队）：不并入名称
+                        # 若为 kg/g/ml 等重量体积单位，当前数字为规格，不加入金额/数量，跳过两行
+                        # 若为 个/支/元 等，数字作为数量/金额加入，跳过单位行
                         la = j + 1
                         while la < len(raw_lines) and not raw_lines[la].strip():
                             la += 1
                         next_s = raw_lines[la].strip() if la < len(raw_lines) else ""
                         if _RE_UNIT_TOKEN.match(next_s):
-                            # number + unit → treat as spec, append to name and skip both lines
-                            name_parts.append(nxt.strip() + next_s)
                             j = la + 1
                             continue
-                        # 中文单位（如 9元、14队 拆成两行）：当前数字+下一行单位合并进名称，不作为金额
                         if _RE_CN_UNIT.match(next_s):
-                            name_parts.append(nxt.strip() + next_s)
+                            v = self._parse_number(nxt)
+                            if v is not None and v > 0:
+                                plain_numbers.append(v)
                             j = la + 1
                             continue
                         v = self._parse_number(nxt)
@@ -1375,6 +1423,10 @@ class PdfInvoiceParser(BaseInvoiceParser):
                     # Name continuation → part of the item name
                     if is_name_continuation(nxt):
                         name_parts.append(nxt)
+                        j += 1
+                        continue
+                    # 规格/尺寸行：不并入名称，跳过本行继续看下一行（以便读到后面的金额）
+                    if _is_spec_or_dimension_line(nxt):
                         j += 1
                         continue
                     # Anything else ends the block

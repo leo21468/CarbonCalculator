@@ -775,9 +775,10 @@ class TestIdenticalNameDifferentAmountLines:
         items = parser._extract_lines_from_tables(tables, "")
         assert len(items) == 2, f"应有2条明细，实际 {len(items)} 条: {[i.name for i in items]}"
         first = items[0]
-        assert "头内六角" in first.name and "螺丝" in first.name and "规格 M6" in first.name, (
-            f"第一条应合并多行续行: {first.name}"
+        assert "头内六角" in first.name and "螺丝" in first.name, (
+            f"第一条应合并名称续行（头内六角、螺丝）: {first.name}"
         )
+        assert "规格 M6" not in first.name, "规格/尺寸行不应并入名称，应单独成列"
         assert "另一商品" in items[1].name
         assert items[0].amount == 3.15 and items[1].amount == 2.00
 
@@ -1002,9 +1003,9 @@ class TestOcrStructuredSpec400g:
         ]
         items = parser._extract_lines_from_ocr_structured(structured)
         assert len(items) >= 1, "应至少解析出1条明细"
-        # 名称应包含 '400g'（已从规格行合并）
-        assert "400g" in items[0].name, (
-            f"规格'400g'应被合并进名称，实际名称: {items[0].name!r}"
+        # 规格 400g 不入名称，应单独成列/行
+        assert "400g" not in items[0].name, (
+            f"规格'400g'不应并入名称，实际名称: {items[0].name!r}"
         )
 
     def test_multiple_items_with_spec_rows(self):
@@ -1097,10 +1098,9 @@ class TestWeightSpecNotAmount:
         ]
         items = parser._extract_from_ocr_blocks(raw_lines)
         assert len(items) >= 1, "应能解析出商品"
-        # 名称应包含「1.25kg」规格（或至少不包含孤立的「1.25」）
-        assert "1.25kg" in items[0].name or "kg" in items[0].name, (
-            f"规格 '1.25kg' 应被合并进名称，实际名称: {items[0].name!r}"
-        )
+        # 规格不入名称；金额应为 9.00
+        assert abs(items[0].amount - 9.00) < 0.01
+        assert "1.25kg" not in items[0].name and "kg" not in items[0].name, "规格不应并入名称"
 
     def test_price_after_weight_correct(self):
         """在规格行之后的价格应被正确提取；名称需 *类别* 开头"""
