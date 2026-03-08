@@ -38,6 +38,9 @@ _RE_DATE = re.compile(
 _RE_TAX_AUTHORITY = re.compile(r'国家.{0,3}[税报批][务]总[局码构]')
 # Issue 1b: 中国增值税常见税率（整数，OCR 有时丢失 '%' 符号）
 _CN_VAT_RATES = frozenset({1, 3, 5, 6, 9, 10, 11, 13, 16, 17})
+# OCR 拆行时常见的计量单位令牌（纯 ASCII 字母，用于识别「数字+单位」规格行）
+# 例如 OCR 将「1.25kg」拆为「1.25」和「kg」两行，「kg」即为单位令牌
+_RE_UNIT_TOKEN = re.compile(r'^[a-zA-Z]{1,6}$')
 
 # 发票非商品行关键词：这些行不应被识别为商品明细
 _INVOICE_NON_ITEM_KEYWORDS = (
@@ -1071,10 +1074,11 @@ class PdfInvoiceParser(BaseInvoiceParser):
             """
             s = line.strip()
             # *cat*name 格式 或 含至少3个汉字的中文商品名（Issue 10；3+字符避免误识别续行片段如「务费」）
-            # 纯中文名称：不含数字（防止「（礼盒装）1.25kg」等规格行被误识别为商品名）
+            # 规格行（如「（礼盒装）1.25kg」）含小数数字，应排除；但商品型号前缀（如「502强力胶」）
+            # 只含整数，不应被排除——故只排除含小数的行，而非排除所有含数字的行。
             has_star_cat = bool(re.search(r'\*+[^*]+\*+', s))
             has_chinese_name = (bool(re.search(r'[\u4e00-\u9fff]{3,}', s))
-                                and not re.search(r'\d', s))
+                                and not re.search(r'\d+\.\d+', s))
             if not has_star_cat and not has_chinese_name:
                 return False
             if re.search(r'[¥￥%]', s):
@@ -1140,6 +1144,19 @@ class PdfInvoiceParser(BaseInvoiceParser):
                         continue
                     # Bare decimal number
                     if bare_number_pat.match(nxt):
+                        # Lookahead: if the next non-empty line is a pure ASCII unit string
+                        # (e.g. "kg", "g", "ml"), the current number is a weight/volume
+                        # specification, not a monetary amount.  Combine as name continuation.
+                        # Example: OCR splits "1.25kg" into "1.25" (this line) + "kg" (next line).
+                        la = j + 1
+                        while la < len(raw_lines) and not raw_lines[la].strip():
+                            la += 1
+                        next_s = raw_lines[la].strip() if la < len(raw_lines) else ""
+                        if _RE_UNIT_TOKEN.match(next_s):
+                            # number + unit → treat as spec, append to name and skip both lines
+                            name_parts.append(nxt.strip() + next_s)
+                            j = la + 1
+                            continue
                         v = self._parse_number(nxt)
                         if v is not None:
                             # Issue 1b: 跳过裸整数形式的常见增值税税率（如 OCR 将 13% 识别为 13）

@@ -958,3 +958,95 @@ class TestOcrStructuredSpec400g:
         amounts = sorted(item.amount for item in items)
         assert abs(amounts[0] - 37.50) < 0.01, f"第一条金额应为37.50，实际: {amounts[0]}"
         assert abs(amounts[1] - 76.99) < 0.01, f"第二条金额应为76.99，实际: {amounts[1]}"
+
+
+class TestDigitPrefixProductName:
+    """修复：商品名称以数字开头（如「502强力胶」）应被 _extract_from_ocr_blocks 正确识别"""
+
+    def test_digit_prefix_name_recognized(self):
+        """「502强力胶」等以整数开头的商品名应被 is_name_only_line 识别为名称行"""
+        parser = PdfInvoiceParser()
+        raw_lines = [
+            "502强力胶",
+            "9.00",
+        ]
+        items = parser._extract_from_ocr_blocks(raw_lines)
+        assert len(items) >= 1, (
+            "以整数开头的商品名（502强力胶）应能被 _extract_from_ocr_blocks 解析"
+        )
+        assert "强力胶" in items[0].name or "502" in items[0].name, (
+            f"名称应包含 '强力胶' 或 '502'，实际为 '{items[0].name}'"
+        )
+        assert abs(items[0].amount - 9.00) < 0.01, (
+            f"金额应为 9.00，实际为 {items[0].amount}"
+        )
+
+    def test_decimal_prefix_spec_line_not_name(self):
+        """含小数的规格行（如「1.25kg」整行）不应被 is_name_only_line 识别为商品名"""
+        parser = PdfInvoiceParser()
+        raw_lines = [
+            "牛肉干",
+            "1.25kg",
+            "9.00",
+        ]
+        items = parser._extract_from_ocr_blocks(raw_lines)
+        # 「1.25kg」整行：含小数，不应触发新块；9.00 应为金额
+        assert len(items) >= 1, "应能解析出商品"
+        assert abs(items[0].amount - 9.00) < 0.01, (
+            f"金额应为 9.00（1.25 是规格，不是金额），实际为 {items[0].amount}"
+        )
+
+
+class TestWeightSpecNotAmount:
+    """修复：OCR 将重量规格「1.25kg」拆为「1.25」和「kg」两行时，「1.25」不应被作为金额"""
+
+    def test_split_weight_spec_not_amount(self):
+        """OCR 拆行：「1.25」后面接「kg」应被识别为规格，不加入金额候选"""
+        parser = PdfInvoiceParser()
+        raw_lines = [
+            "牛肉干",
+            "1.25",   # OCR 把 1.25kg 拆开
+            "kg",     # 单位行
+            "9.00",   # 实际金额
+        ]
+        items = parser._extract_from_ocr_blocks(raw_lines)
+        assert len(items) >= 1, "应能解析出商品"
+        # 金额必须是 9.00，不应是 1.25
+        assert abs(items[0].amount - 9.00) < 0.01, (
+            f"金额应为 9.00（1.25 是重量规格，不是金额），实际为 {items[0].amount}"
+        )
+
+    def test_split_weight_spec_name_contains_spec(self):
+        """OCR 拆行后，规格「1.25kg」应被合并进商品名称"""
+        parser = PdfInvoiceParser()
+        raw_lines = [
+            "牛肉干",
+            "1.25",
+            "kg",
+            "9.00",
+        ]
+        items = parser._extract_from_ocr_blocks(raw_lines)
+        assert len(items) >= 1, "应能解析出商品"
+        # 名称应包含「1.25kg」规格（或至少不包含孤立的「1.25」）
+        assert "1.25kg" in items[0].name or "kg" in items[0].name, (
+            f"规格 '1.25kg' 应被合并进名称，实际名称: {items[0].name!r}"
+        )
+
+    def test_price_after_weight_correct(self):
+        """在规格行之后的价格应被正确提取；整数后若下一行为数字（非单位），则不触发规格合并"""
+        parser = PdfInvoiceParser()
+        raw_lines = [
+            "有机牛奶",
+            "250",    # 整数，后面接数字行（9.80），不接单位行 → 不触发规格合并
+            "9.80",   # 价格
+            "0.98",   # 税额（应取倒数第二个：9.80）
+        ]
+        items = parser._extract_from_ocr_blocks(raw_lines)
+        assert len(items) >= 1, "应能解析出商品"
+        assert abs(items[0].amount - 9.80) < 0.01, (
+            f"金额应为 9.80，实际为 {items[0].amount}"
+        )
+        # 250 后面没有单位行，不应被合并为规格；它被识别为 unit_price 或参与数量计算
+        # 关键：金额必须是 9.80，而非 0.98（税额）或 250（错误解析）
+        assert abs(items[0].amount - 0.98) > 0.01, "amount 不应为税额 0.98"
+        assert abs(items[0].amount - 250) > 0.01, "amount 不应为整数 250"
