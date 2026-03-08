@@ -233,9 +233,9 @@ class PdfInvoiceParser(BaseInvoiceParser):
         structured = []
         for page_idx, page in enumerate(pdf.pages):
             img = page.to_image(resolution=150).original  # PIL Image
-            result = ocr.ocr(np.array(img), cls=True)
-            if result and result[0]:
-                rows = self._structure_postprocess(result[0])
+            page_items = self._run_ocr_on_image(ocr, np.array(img))
+            if page_items:
+                rows = self._structure_postprocess(page_items)
             else:
                 rows = []
             full_text = "\n".join(row["text"] for row in rows)
@@ -243,6 +243,42 @@ class PdfInvoiceParser(BaseInvoiceParser):
 
         ocr_text = "\n".join(page["full_text"] for page in structured)
         return ocr_text, structured
+
+    @staticmethod
+    def _run_ocr_on_image(ocr, img_array) -> list:
+        """对单张图片调用 OCR，将结果规范化为 [[bbox, (text, score)], ...] 格式。
+
+        兼容 PaddleOCR 2.x（ocr.ocr 返回嵌套列表）和 3.x（predict 返回 OCRResult 对象）。
+
+        Returns:
+            list of [bbox, (text, score)] items，其中 bbox 为 4 点坐标列表。
+        """
+        # PaddleOCR 3.x：使用 predict() 接口（ocr() 已废弃且不接受 cls 参数）
+        if hasattr(ocr, 'predict'):
+            result = ocr.predict(img_array)
+            if not result:
+                return []
+            page_result = result[0]
+            # PaddleOCR 3.x：OCRResult 为类字典对象，含 rec_polys/rec_texts/rec_scores
+            if not isinstance(page_result, list):
+                try:
+                    polys = page_result['rec_polys']
+                    texts = page_result['rec_texts']
+                    scores = list(page_result.get('rec_scores', [1.0] * len(texts)))
+                    # 确保三个列表长度一致
+                    n = min(len(polys), len(texts), len(scores))
+                    return [[polys[k], (texts[k], scores[k])] for k in range(n)]
+                except (KeyError, TypeError):
+                    pass
+            # 若 page_result 已是列表（兼容旧版 predict 行为），直接返回
+            if isinstance(page_result, list):
+                return page_result
+            return []
+        # 降级：PaddleOCR 2.x 旧接口（不传 cls 避免版本差异）
+        result = ocr.ocr(img_array)
+        if result and result[0]:
+            return result[0]
+        return []
 
     def _structure_postprocess(self, page_items: list) -> list:
         """对单页 PaddleOCR 识别结果进行结构化后处理，降低列串位。
@@ -434,8 +470,6 @@ class PdfInvoiceParser(BaseInvoiceParser):
 
     def _extract_invoice(self, pdf) -> Invoice:
         """从 PDF 中提取发票信息"""
-        import re
-
         all_text = ""
         all_tables = []
         for page in pdf.pages:
@@ -531,7 +565,6 @@ class PdfInvoiceParser(BaseInvoiceParser):
 
     def _extract_field(self, text: str, patterns: List[str]) -> Union[str, None]:
         """按多个正则模式尝试提取字段"""
-        import re
         for pat in patterns:
             m = re.search(pat, text)
             if m:
@@ -540,8 +573,6 @@ class PdfInvoiceParser(BaseInvoiceParser):
 
     def _extract_lines_from_tables(self, tables: list, full_text: str) -> List[InvoiceLineItem]:
         """从 PDF 表格中提取发票明细行"""
-        import re
-
         lines = []
                 # 中国发票表格列名关键词（列序：项目名称、规格型号、单位、数量、单价、金额、税率、税额）
         name_keywords = ("货物", "名称", "劳务", "项目", "服务")
@@ -683,8 +714,6 @@ class PdfInvoiceParser(BaseInvoiceParser):
 
     def _extract_lines_from_text(self, text: str) -> List[InvoiceLineItem]:
         """当表格提取失败时，从全文正则提取明细行（兜底）"""
-        import re
-
         lines = []
 
         raw_lines = text.split("\n")
@@ -825,7 +854,22 @@ class PdfInvoiceParser(BaseInvoiceParser):
                 quantity = self._parse_number(all_nums[0])
                 unit_price = self._parse_number(all_nums[-3])
                 amount = self._parse_number(all_nums[-2]) or 0.0
-            elif len(all_nums) >= 2:
+            elif len(all_nums) == 3:
+                # 三个数字时：判断是否为「数量, 单价, 金额」或「单价, 金额, 税额」
+                # 若 nums[0] × nums[1] ≈ nums[2]（数量×单价=金额），则取最后一个为金额
+                a = self._parse_number(all_nums[0])
+                b = self._parse_number(all_nums[1])
+                c = self._parse_number(all_nums[2])
+                if a and b and c and c > 1e-9 and abs(a * b - c) / c < 0.02:
+                    quantity = a
+                    unit_price = b
+                    amount = c
+                else:
+                    # 默认：倒数第二为金额（最后一个可能是税额）
+                    amount = b or 0.0
+                    quantity = None
+                    unit_price = None
+            elif len(all_nums) == 2:
                 # 两个数字时：取倒数第二个为金额（最后一个可能是税额）
                 amount = self._parse_number(all_nums[-2]) or 0.0
                 quantity = None
@@ -879,20 +923,32 @@ class PdfInvoiceParser(BaseInvoiceParser):
                     quantity = self._parse_number(all_nums[0])
                     unit_price = self._parse_number(all_nums[-3])
                     amount = self._parse_number(all_nums[-2]) or 0.0
-                else:
-                    # Issue 8: 少于4个数字时，若有2+个数字取倒数第二（金额），避免最后一个税额被误用
-                    if len(all_nums) >= 2:
-                        amount = self._parse_number(all_nums[-2]) or 0.0
-                        quantity = self._parse_number(m.group(2)) if m.group(2) else None
-                        unit_price = self._parse_number(m.group(4)) if m.group(4) else None
-                    elif len(all_nums) == 1:
-                        amount = self._parse_number(all_nums[0]) or 0.0
-                        quantity = self._parse_number(m.group(2)) if m.group(2) else None
-                        unit_price = self._parse_number(m.group(4)) if m.group(4) else None
+                elif len(all_nums) == 3:
+                    # 三个数字：判断是否为「数量, 单价, 金额」或「单价, 金额, 税额」
+                    a = self._parse_number(all_nums[0])
+                    b = self._parse_number(all_nums[1])
+                    c = self._parse_number(all_nums[2])
+                    if a and b and c and c > 1e-9 and abs(a * b - c) / c < 0.02:
+                        quantity = a
+                        unit_price = b
+                        amount = c
                     else:
+                        amount = b or 0.0
                         quantity = self._parse_number(m.group(2)) if m.group(2) else None
                         unit_price = self._parse_number(m.group(4)) if m.group(4) else None
-                        amount = self._parse_number(m.group(5)) or 0.0
+                elif len(all_nums) == 2:
+                    # Issue 8: 两个数字取倒数第二（金额），避免最后一个税额被误用
+                    amount = self._parse_number(all_nums[-2]) or 0.0
+                    quantity = self._parse_number(m.group(2)) if m.group(2) else None
+                    unit_price = self._parse_number(m.group(4)) if m.group(4) else None
+                elif len(all_nums) == 1:
+                    amount = self._parse_number(all_nums[0]) or 0.0
+                    quantity = self._parse_number(m.group(2)) if m.group(2) else None
+                    unit_price = self._parse_number(m.group(4)) if m.group(4) else None
+                else:
+                    quantity = self._parse_number(m.group(2)) if m.group(2) else None
+                    unit_price = self._parse_number(m.group(4)) if m.group(4) else None
+                    amount = self._parse_number(m.group(5)) or 0.0
                 unit = m.group(3).strip() if m.group(3) else None
                 if amount <= 0:
                     continue
@@ -916,7 +972,6 @@ class PdfInvoiceParser(BaseInvoiceParser):
         structured_rows: 页列表 [{page, rows: [{columns: [...]}, ...], full_text}, ...]，
         需先按行展开再处理。
         """
-        import re
 
         # 展开页列表为行列表（修复：原逻辑误将“页”当作“行”遍历）
         all_rows = []
@@ -1065,7 +1120,6 @@ class PdfInvoiceParser(BaseInvoiceParser):
         Returns a non-empty list when multi-line blocks are detected; returns [] so
         the caller falls back to the existing single-line pattern matching.
         """
-        import re
 
         def is_name_only_line(line: str) -> bool:
             """True if line looks like a product name with no inline numbers/currency/percent.
@@ -1144,6 +1198,15 @@ class PdfInvoiceParser(BaseInvoiceParser):
                         continue
                     # Bare decimal number
                     if bare_number_pat.match(nxt):
+                        # Lookback: if the last name_part was a pure ASCII letter prefix
+                        # (e.g. "M" before "3" in "M3" for cubic meters), combine them
+                        # so the unit "M3" stays in the name rather than "3" entering
+                        # plain_numbers and being mistaken for an amount.
+                        if (len(name_parts) > 1
+                                and _RE_UNIT_TOKEN.match(name_parts[-1].strip())):
+                            name_parts[-1] = name_parts[-1].strip() + nxt.strip()
+                            j += 1
+                            continue
                         # Lookahead: if the next non-empty line is a pure ASCII unit string
                         # (e.g. "kg", "g", "ml"), the current number is a weight/volume
                         # specification, not a monetary amount.  Combine as name continuation.
@@ -1411,7 +1474,6 @@ class PdfInvoiceParser(BaseInvoiceParser):
         """
         if not cell or not str(cell).strip():
             return []
-        import re
         cleaned = str(cell).strip()
         # 含税率时只剔除百分比部分，仍解析金额等数值（避免"80.00 13%"整格被丢弃导致漏产品）
         cleaned = _RE_PERCENT.sub("", cleaned)
