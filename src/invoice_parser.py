@@ -515,6 +515,7 @@ class PdfInvoiceParser(BaseInvoiceParser):
             all_tables.extend(tables)
 
         ocr_structured = []
+        text_from_ocr = False  # 当前 all_text 是否来自 OCR（纯图片/扫描 PDF）
 
         # 纯图片/扫描版 PDF：无文本或文本过短时使用 OCR（部分 PDF 会提取到极少元数据字符，仍无法得到明细）
         _MIN_TEXT_LEN_FOR_OCR = 80
@@ -523,6 +524,7 @@ class PdfInvoiceParser(BaseInvoiceParser):
                 ocr_text, ocr_structured = self._ocr_pdf(pdf)
                 if ocr_text.strip():
                     all_text = ocr_text
+                    text_from_ocr = True
             except Exception:
                 pass
 
@@ -567,9 +569,13 @@ class PdfInvoiceParser(BaseInvoiceParser):
         if not inv.lines or all(l.amount <= 0 for l in inv.lines):
             inv.lines = []  # 清空无效行，避免遮蔽后续回退路径
             if ocr_structured:
-                inv.lines = self._extract_lines_from_ocr_structured(ocr_structured)
+                inv.lines = self._extract_lines_from_ocr_structured(
+                    ocr_structured, lenient_from_ocr=text_from_ocr
+                )
             if not inv.lines:
-                inv.lines = self._extract_lines_from_text(all_text)
+                inv.lines = self._extract_lines_from_text(
+                    all_text, lenient_from_ocr=text_from_ocr
+                )
             # 若仍无明细，尝试 VI-LayoutXLM KIE（需配置 PADDLEOCR_ROOT + USE_KIE=1）
             if not inv.lines and ocr_structured:
                 try:
@@ -767,18 +773,17 @@ class PdfInvoiceParser(BaseInvoiceParser):
 
         return lines
 
-    def _extract_lines_from_text(self, text: str) -> List[InvoiceLineItem]:
-        """当表格提取失败时，从全文正则提取明细行（兜底）"""
+    def _extract_lines_from_text(self, text: str, lenient_from_ocr: bool = False) -> List[InvoiceLineItem]:
+        """当表格提取失败时，从全文正则提取明细行（兜底）。
+        lenient_from_ocr: 为 True 时（纯图片 PDF），不要求名称以 *类别* 开头。
+        """
         lines = []
 
         raw_lines = text.split("\n")
 
         # First attempt: block-based multi-line OCR merging (handles scanned PDFs where
         # each field of an item is on its own line).  If blocks are found we return early
-        # to avoid the existing 2-line pre-processing from mangling the multi-line text
-        # (e.g. merging a name-only line with the first number, which causes the old
-        # pattern to capture the tax rate digit as the amount instead of the real amount).
-        block_items = self._extract_from_ocr_blocks(raw_lines)
+        block_items = self._extract_from_ocr_blocks(raw_lines, lenient_from_ocr=lenient_from_ocr)
         if block_items:
             return block_items
         merged_lines = []
@@ -866,8 +871,8 @@ class PdfInvoiceParser(BaseInvoiceParser):
         )
         for m in pattern.finditer(processed_text):
             name = m.group(1).strip()
-            # 只有以有效 *类别* 开头（且 * 之间不是尺寸如 8*22*7）才算作物体的名称
-            if not _is_valid_star_category_name(name):
+            # 非宽松模式时：只有以有效 *类别* 开头（且 * 之间不是尺寸）才算作物体的名称
+            if not lenient_from_ocr and not _is_valid_star_category_name(name):
                 continue
             if any(kw in name for kw in _INVOICE_NON_ITEM_KEYWORDS):
                 continue
@@ -955,8 +960,8 @@ class PdfInvoiceParser(BaseInvoiceParser):
             )
             for m in pattern2.finditer(processed_text):
                 name = m.group(1).strip()
-                # 只有以有效 *类别* 开头才算作物体的名称
-                if not _is_valid_star_category_name(name):
+                # 非宽松模式时：只有以有效 *类别* 开头才算作物体的名称
+                if not lenient_from_ocr and not _is_valid_star_category_name(name):
                     continue
                 # Skip summary / header lines
                 if any(kw in name for kw in _INVOICE_NON_ITEM_KEYWORDS):
@@ -1022,14 +1027,12 @@ class PdfInvoiceParser(BaseInvoiceParser):
 
         return lines
 
-    def _extract_lines_from_ocr_structured(self, structured_rows: list) -> List[InvoiceLineItem]:
+    def _extract_lines_from_ocr_structured(self, structured_rows: list, lenient_from_ocr: bool = False) -> List[InvoiceLineItem]:
         """从 _structure_postprocess 输出的结构化页列表中提取发票明细行。
 
         利用列对齐信息，将数值列（金额/数量/税额）与名称列区分，
         减少数量/金额/税额串位的概率。
-
-        structured_rows: 页列表 [{page, rows: [{columns: [...]}, ...], full_text}, ...]，
-        需先按行展开再处理。
+        lenient_from_ocr: 为 True 时（纯图片 PDF），不要求名称以 *类别* 开头。
         """
 
         # 展开页列表为行列表（修复：原逻辑误将“页”当作“行”遍历）
@@ -1072,8 +1075,8 @@ class PdfInvoiceParser(BaseInvoiceParser):
 
             if name_col_idx is None or not name_val:
                 continue
-            # 只有以有效 *类别* 开头（且 * 之间不是尺寸）才算作物体的名称
-            if not _is_valid_star_category_name(name_val):
+            # 非宽松模式时：只有以有效 *类别* 开头（且 * 之间不是尺寸）才算作物体的名称
+            if not lenient_from_ocr and not _is_valid_star_category_name(name_val):
                 continue
             # 过滤非商品行
             if any(kw in name_val for kw in _INVOICE_NON_ITEM_KEYWORDS):
@@ -1171,21 +1174,37 @@ class PdfInvoiceParser(BaseInvoiceParser):
 
         return items
 
-    def _extract_from_ocr_blocks(self, raw_lines: list) -> List[InvoiceLineItem]:
+    def _extract_from_ocr_blocks(self, raw_lines: list, lenient_from_ocr: bool = False) -> List[InvoiceLineItem]:
         """Block-based multi-line OCR merging for scanned/image PDFs.
 
         When OCR splits a single invoice item across multiple lines (item name on one
         line, numeric fields on subsequent lines, name continuation even later), this
         method groups those lines into logical blocks and extracts InvoiceLineItem
         objects directly.
-
+        lenient_from_ocr: 为 True 时（纯图片 PDF），接受以 2+ 汉字开头的名称行，不强制 *类别*。
         Returns a non-empty list when multi-line blocks are detected; returns [] so
         the caller falls back to the existing single-line pattern matching.
         """
 
         def is_name_only_line(line: str) -> bool:
-            """True if line looks like a product name: 必须以有效 *类别* 开头（* 之间不是尺寸如 8*22*7）。"""
+            """True if line looks like a product name. 非宽松时须以有效 *类别* 开头；宽松时 2+ 汉字即可。"""
             s = line.strip()
+            if lenient_from_ocr:
+                # 纯图片 PDF 宽松模式：含至少2个汉字、无小数、非关键词，即视为名称行
+                has_chinese = bool(re.search(r'[\u4e00-\u9fff]{2,}', s)) and not re.search(r'\d+\.\d+', s)
+                if not has_chinese:
+                    return False
+                if re.search(r'[¥￥%]', s):
+                    return False
+                if any(kw in s for kw in _INVOICE_NON_ITEM_KEYWORDS):
+                    return False
+                if _RE_TAX_AUTHORITY.search(s):
+                    return False
+                s_clean = re.sub(r'\*[^*]+\*', '', s)
+                if len(re.findall(r'\b\d+(?:\.\d+)?\b', s_clean)) >= 2:
+                    return False
+                return True
+            # 非宽松：必须以有效 *类别* 开头
             if not _is_valid_star_category_name(s):
                 return False
             if re.search(r'[¥￥%]', s):
