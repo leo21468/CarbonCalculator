@@ -6,6 +6,9 @@ from __future__ import annotations
 import os
 from fastapi import APIRouter, HTTPException, UploadFile, File, Body
 
+from src.models import Scope
+from src.invoice_parser import _normalize_name_single_line
+
 from backend.database import (
     add_invoice_categories_batch, list_invoice_categories,
     get_invoice_category_stats, InvoiceCategoryRecord,
@@ -63,7 +66,7 @@ async def upload_invoice(file: UploadFile = File(...)):
         records.append(InvoiceCategoryRecord(
             id=None,
             invoice_number=invoice.invoice_number,
-            line_name=cl.line.name,
+            line_name=_normalize_name_single_line(cl.line.name or ""),
             scope=cl.scope.value,
             match_type=cl.match_type,
             amount=cl.line.amount,
@@ -74,10 +77,17 @@ async def upload_invoice(file: UploadFile = File(...)):
         add_invoice_categories_batch(records)
 
     aggregate = result.get("aggregate_kg", {})
-    total_emissions_kg = sum(aggregate.values()) if aggregate else 0.0
+    # 始终返回三个 scope 的键，避免前端拿到空或不完整结构；键用枚举的 value 保证一致
+    aggregate_out = {}
+    for s in (Scope.SCOPE_1, Scope.SCOPE_2, Scope.SCOPE_3):
+        val = aggregate.get(s, 0.0) if hasattr(aggregate, "get") else 0.0
+        if not isinstance(val, (int, float)):
+            val = 0.0
+        aggregate_out[s.value] = round(float(val), 4)
+    total_emissions_kg = sum(aggregate_out.values())
     lines_result = [
         {
-            "name": cl.line.name,
+            "name": _normalize_name_single_line(cl.line.name or ""),
             "scope": cl.scope.value,
             "match_type": cl.match_type,
             "amount": cl.line.amount,
@@ -94,10 +104,7 @@ async def upload_invoice(file: UploadFile = File(...)):
             "seller": invoice.seller.name if invoice.seller else None,
             "total_emissions_kg": round(total_emissions_kg, 4),
             "lines": lines_result,
-            "aggregate": {
-                scope.value: round(kg, 4)
-                for scope, kg in aggregate.items()
-            },
+            "aggregate": aggregate_out,
         },
         "message": f"发票处理完成，共 {len(classified)} 条明细",
     }
@@ -120,6 +127,12 @@ def process_invoice_json(body: dict = Body(...)):
 
     classified = result.get("classified", [])
     aggregate = result.get("aggregate_kg", {})
+    aggregate_out = {}
+    for s in (Scope.SCOPE_1, Scope.SCOPE_2, Scope.SCOPE_3):
+        val = aggregate.get(s, 0.0) if hasattr(aggregate, "get") else 0.0
+        if not isinstance(val, (int, float)):
+            val = 0.0
+        aggregate_out[s.value] = round(float(val), 4)
 
     per_item_emissions = []
     for cl in classified:
@@ -139,7 +152,7 @@ def process_invoice_json(body: dict = Body(...)):
             records.append(InvoiceCategoryRecord(
                 id=None,
                 invoice_number=invoice_number,
-                line_name=cl.line.name,
+                line_name=_normalize_name_single_line(cl.line.name or ""),
                 scope=cl.scope.value,
                 match_type=cl.match_type,
                 amount=cl.line.amount,
@@ -148,10 +161,10 @@ def process_invoice_json(body: dict = Body(...)):
             ))
         add_invoice_categories_batch(records)
 
-    total_emissions_kg = sum(aggregate.values()) if aggregate else 0.0
+    total_emissions_kg = sum(aggregate_out.values())
     lines_result = [
         {
-            "name": cl.line.name,
+            "name": _normalize_name_single_line(cl.line.name or ""),
             "scope": cl.scope.value,
             "match_type": cl.match_type,
             "amount": cl.line.amount,
@@ -168,10 +181,7 @@ def process_invoice_json(body: dict = Body(...)):
             "seller": seller_name,
             "total_emissions_kg": round(total_emissions_kg, 4),
             "lines": lines_result,
-            "aggregate": {
-                scope.value: round(kg, 4)
-                for scope, kg in aggregate.items()
-            },
+            "aggregate": aggregate_out,
         },
         "message": f"发票处理完成，共 {len(classified)} 条明细",
     }
@@ -191,7 +201,7 @@ def get_invoice_categories():
             {
                 "id": r.id,
                 "invoice_number": r.invoice_number,
-                "line_name": r.line_name,
+                "line_name": _normalize_name_single_line(r.line_name or ""),
                 "scope": r.scope,
                 "match_type": r.match_type,
                 "amount": r.amount,

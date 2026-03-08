@@ -276,14 +276,27 @@
       if (data.aggregate) {
         html += '<div class="stats-grid">';
         for (const [scope, kg] of Object.entries(data.aggregate)) {
-          html += `<div class="stat-card"><div class="label">${scope}</div><div class="value">${kg} kg</div></div>`;
+          const kgNum = Number(kg);
+          const kgStr = (kgNum === 0 && !data.total_emissions_kg) ? '0' : (Number.isInteger(kgNum) ? kgNum : kgNum.toFixed(4));
+          html += `<div class="stat-card"><div class="label">${scope}</div><div class="value">${kgStr} kg</div></div>`;
         }
         html += '</div>';
+        if (data.total_emissions_kg === 0) {
+          if (!data.lines || data.lines.length === 0) {
+            html += '<p class="hint" style="margin-top:0.5rem;color:var(--muted);font-size:0.9rem;">未计算出排放量：所有明细已被过滤（如金额为 0 或表头行）。请确认 PDF 解析出的「金额」列是否正确。</p>';
+          } else {
+            const allZero = data.lines.every(l => !l.emission_kg || l.emission_kg === 0);
+            if (allZero) {
+              html += '<p class="hint" style="margin-top:0.5rem;color:var(--muted);font-size:0.9rem;">未计算出排放量：请检查发票明细中的「金额」是否已正确解析（金额需大于 0）。</p>';
+            }
+          }
+        }
       }
       if (data.lines && data.lines.length) {
         html += '<table class="category-table"><tr><th>名称</th><th>范围</th><th>匹配方式</th><th>金额</th><th>排放(kg)</th></tr>';
         for (const l of data.lines) {
-          html += `<tr><td>${l.name}</td>
+          const nameOneLine = (l.name || '').replace(/\s+/g, ' ').trim();
+          html += `<tr><td>${nameOneLine}</td>
             <td><span class="scope-tag ${scopeClass(l.scope)}">${l.scope}</span></td>
             <td>${l.match_type}</td><td>¥${l.amount}</td><td>${l.emission_kg}</td></tr>`;
         }
@@ -296,7 +309,7 @@
       if (btn) {
         btn.addEventListener('click', () => {
           exportCSV(
-            data.lines.map(l => [l.name, l.scope, l.match_type, l.amount, l.emission_kg, l.tax_code || '']),
+            data.lines.map(l => [(l.name || '').replace(/\s+/g, ' ').trim(), l.scope, l.match_type, l.amount, l.emission_kg, l.tax_code || '']),
             ['名称', '范围', '匹配方式', '金额', '排放(kg)', '税收编码'],
             'invoice_result.csv'
           );
@@ -541,7 +554,7 @@
         }
         let tbl = '<table class="category-table"><tr><th>发票号</th><th>名称</th><th>范围</th><th>匹配</th><th>金额</th><th>排放(kg)</th><th>时间</th></tr>';
         for (const c of categories) {
-          tbl += `<tr><td>${c.invoice_number || '-'}</td><td>${c.line_name}</td>
+          tbl += `<tr><td>${c.invoice_number || '-'}</td><td>${(c.line_name || '').replace(/\s+/g, ' ').trim()}</td>
             <td><span class="scope-tag ${scopeClass(c.scope)}">${c.scope}</span></td>
             <td>${c.match_type}</td><td>¥${c.amount}</td><td>${c.emission_kg}</td><td>${c.created_at || '-'}</td></tr>`;
         }
@@ -551,7 +564,7 @@
 
         $('btnExportStats').addEventListener('click', () => {
           exportCSV(
-            categories.map(c => [c.invoice_number, c.line_name, c.scope, c.match_type, c.amount, c.emission_kg, c.created_at]),
+            categories.map(c => [c.invoice_number, (c.line_name || '').replace(/\s+/g, ' ').trim(), c.scope, c.match_type, c.amount, c.emission_kg, c.created_at]),
             ['发票号', '名称', '范围', '匹配方式', '金额', '排放(kg)', '时间'],
             'invoice_categories.csv'
           );

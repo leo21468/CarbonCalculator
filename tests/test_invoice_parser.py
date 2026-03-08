@@ -44,9 +44,9 @@ class TestTableAmountConsistencyCheck:
     def test_table_amount_consistency_check(self):
         """当金额列与单价列数值接近且数量>1时，纠正 amount = unit_price * quantity"""
         parser = PdfInvoiceParser()
-        # 模拟 amount 列被误解析为单价值（100），而非真实金额（1000）
+        # 模拟 amount 列被误解析为单价值（100），而非真实金额（1000）；名称需 *类别* 开头才算物体
         header = ["货物名称", "数量", "单位", "单价", "金额"]
-        row = ["办公用品", "10", "个", "100", "100"]  # amount_col 值=100，与单价相同
+        row = ["*办公用品*办公用品", "10", "个", "100", "100"]  # amount_col 值=100，与单价相同
         tables = [[header, row]]
         items = parser._extract_lines_from_tables(tables, "")
         assert len(items) == 1
@@ -109,9 +109,9 @@ class TestOcrTaxRateNotAmount:
         )
 
     def test_ocr_text_with_tax_rate_column_pattern2(self):
-        """非*前缀格式的 OCR 文本含税率列，amount 仍应取金额而非税率"""
+        """非*前缀格式的 OCR 文本含税率列，amount 仍应取金额而非税率；名称需 *类别* 开头才算物体"""
         parser = PdfInvoiceParser()
-        text = "办公用品 50 个 10.00 500.00 6% 30.00"
+        text = "*办公用品*办公用品 50 个 10.00 500.00 6% 30.00"
         items = parser._extract_lines_from_text(text)
         assert len(items) >= 1, "应能提取到至少1条明细"
         assert abs(items[0].amount - 500.00) < 0.01, (
@@ -515,15 +515,14 @@ class TestTableNameColRowIndex:
     """测试表格表头第0列为纯数字（行号）时，名称列应改用第1列"""
 
     def test_row_index_col_0_uses_col1_as_name(self):
-        """当表头第0列为纯数字行号时，应优先用第1列作为名称列"""
+        """当表头第0列为纯数字行号时，应优先用第1列作为名称列；名称需 *类别* 开头才算物体"""
         parser = PdfInvoiceParser()
-        # 模拟序号+名称+金额结构的表格
         header = ["1", "货物名称", "金额"]
-        row = ["1", "螺丝", "9.95"]
+        row = ["1", "*金属*螺丝", "9.95"]
         tables = [[header, row]]
         items = parser._extract_lines_from_tables(tables, "")
         assert len(items) == 1
-        assert items[0].name == "螺丝", f"名称应为 '螺丝'，实际为 '{items[0].name}'"
+        assert "螺丝" in items[0].name, f"名称应含 '螺丝'，实际为 '{items[0].name}'"
         assert abs(items[0].amount - 9.95) < 0.01
 
 
@@ -548,21 +547,20 @@ class TestSmallAmountItemParsed:
 
 
 class TestNonAsteriskItemParsed:
-    """测试无 *类别* 前缀的商品（如普通五金）能被 Pattern 2 解析"""
+    """测试带 *类别* 前缀的商品（规则：仅 *XXX* 开头才算物体）能被 Pattern 2 解析"""
 
     def test_screw_name_without_prefix_parsed(self):
-        """无 *类别* 前缀的 '螺丝' 行应通过 Pattern 2 解析"""
+        """带 *金属* 前缀的 '螺丝' 行应通过 Pattern 2 解析"""
         parser = PdfInvoiceParser()
-        # Pattern 2 fallback：商品名后跟数字，用于电商平台发票
-        text = "螺丝 M3×10mm 100粒 9.00"
+        text = "*金属*螺丝 M3×10mm 100粒 9.00"
         items = parser._extract_lines_from_text(text)
         assert len(items) >= 1
         assert items[0].amount > 0, f"螺丝的金额应 > 0，实际为 {items[0].amount}"
 
     def test_bearing_name_without_prefix_parsed(self):
-        """无 *类别* 前缀的 '轴承' 行应通过 Pattern 2 解析"""
+        """带 *轴承* 前缀的 '轴承' 行应被解析"""
         parser = PdfInvoiceParser()
-        text = "轴承 6202 5个 17.82"
+        text = "*轴承*轴承 6202 5个 17.82"
         items = parser._extract_lines_from_text(text)
         assert len(items) >= 1
         assert items[0].amount > 0
@@ -967,12 +965,12 @@ class TestDigitPrefixProductName:
         """「502强力胶」等以整数开头的商品名应被 is_name_only_line 识别为名称行"""
         parser = PdfInvoiceParser()
         raw_lines = [
-            "502强力胶",
+            "*化工*502强力胶",
             "9.00",
         ]
         items = parser._extract_from_ocr_blocks(raw_lines)
         assert len(items) >= 1, (
-            "以整数开头的商品名（502强力胶）应能被 _extract_from_ocr_blocks 解析"
+            "以 *类别* 开头的商品名（*化工*502强力胶）应能被 _extract_from_ocr_blocks 解析"
         )
         assert "强力胶" in items[0].name or "502" in items[0].name, (
             f"名称应包含 '强力胶' 或 '502'，实际为 '{items[0].name}'"
@@ -982,10 +980,10 @@ class TestDigitPrefixProductName:
         )
 
     def test_decimal_prefix_spec_line_not_name(self):
-        """含小数的规格行（如「1.25kg」整行）不应被 is_name_only_line 识别为商品名"""
+        """含小数的规格行（如「1.25kg」整行）不应被 is_name_only_line 识别为商品名；名称需 *类别* 开头"""
         parser = PdfInvoiceParser()
         raw_lines = [
-            "牛肉干",
+            "*食品*牛肉干",
             "1.25kg",
             "9.00",
         ]
@@ -1001,10 +999,10 @@ class TestWeightSpecNotAmount:
     """修复：OCR 将重量规格「1.25kg」拆为「1.25」和「kg」两行时，「1.25」不应被作为金额"""
 
     def test_split_weight_spec_not_amount(self):
-        """OCR 拆行：「1.25」后面接「kg」应被识别为规格，不加入金额候选"""
+        """OCR 拆行：「1.25」后面接「kg」应被识别为规格，不加入金额候选；名称需 *类别* 开头"""
         parser = PdfInvoiceParser()
         raw_lines = [
-            "牛肉干",
+            "*食品*牛肉干",
             "1.25",   # OCR 把 1.25kg 拆开
             "kg",     # 单位行
             "9.00",   # 实际金额
@@ -1017,10 +1015,10 @@ class TestWeightSpecNotAmount:
         )
 
     def test_split_weight_spec_name_contains_spec(self):
-        """OCR 拆行后，规格「1.25kg」应被合并进商品名称"""
+        """OCR 拆行后，规格「1.25kg」应被合并进商品名称；名称需 *类别* 开头"""
         parser = PdfInvoiceParser()
         raw_lines = [
-            "牛肉干",
+            "*食品*牛肉干",
             "1.25",
             "kg",
             "9.00",
@@ -1033,10 +1031,10 @@ class TestWeightSpecNotAmount:
         )
 
     def test_price_after_weight_correct(self):
-        """在规格行之后的价格应被正确提取；整数后若下一行为数字（非单位），则不触发规格合并"""
+        """在规格行之后的价格应被正确提取；名称需 *类别* 开头"""
         parser = PdfInvoiceParser()
         raw_lines = [
-            "有机牛奶",
+            "*食品*有机牛奶",
             "250",    # 整数，后面接数字行（9.80），不接单位行 → 不触发规格合并
             "9.80",   # 价格
             "0.98",   # 税额（应取倒数第二个：9.80）
@@ -1115,12 +1113,11 @@ class TestUnitWithNumberNotAmount:
     """修复：OCR 将单位 'M³' 等含数字单位拆成字母行+数字行时，数字不应被误认为金额"""
 
     def test_unit_letter_prefix_merged_with_number(self):
-        """'M'（名称续行）+ '3'（数字）应被合并为 'M3' 写入名称，而非将 '3' 加入 plain_numbers"""
+        """'M'（名称续行）+ '3'（数字）应被合并为 'M3' 写入名称，而非将 '3' 加入 plain_numbers；名称需 *类别* 开头"""
         from src.invoice_parser import PdfInvoiceParser
         parser = PdfInvoiceParser()
-        # OCR 将 "M³" 拆成 "M" 和 "3" 两行，"9.00" 为实际金额
         raw_lines = [
-            "某产品",
+            "*建材*某产品",
             "M",     # 单位字母前缀
             "3",     # 单位数字后缀 → 应与 "M" 合并为 "M3" 写入名称
             "9.00",  # 实际金额
@@ -1130,7 +1127,6 @@ class TestUnitWithNumberNotAmount:
         assert abs(items[0].amount - 9.00) < 0.01, (
             f"金额应为 9.00（'3' 是单位后缀，不是金额），实际为 {items[0].amount}"
         )
-        # 名称应包含 "M3"（已从字母+数字合并）
         assert "M3" in items[0].name, (
             f"名称应包含合并后的单位 'M3'，实际名称: {items[0].name!r}"
         )
