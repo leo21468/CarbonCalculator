@@ -11,7 +11,7 @@ from src.invoice_parser import _normalize_name_single_line
 
 from backend.database import (
     add_invoice_categories_batch, list_invoice_categories,
-    get_invoice_category_stats, InvoiceCategoryRecord,
+    get_invoice_category_stats, clear_invoice_categories, InvoiceCategoryRecord,
 )
 
 router = APIRouter(prefix="/api/invoice", tags=["invoices"])
@@ -223,3 +223,14 @@ def get_invoice_categories():
 def get_invoice_stats():
     """按 Scope 汇总发票类别统计"""
     return {"success": True, "data": get_invoice_category_stats(), "message": ""}
+
+
+@router.post(
+    "/clear",
+    summary="清空发票类别记录",
+    description="清空数据库中所有发票类别统计记录，返回删除条数。",
+)
+def clear_invoice_records():
+    """清空所有发票类别记录"""
+    deleted = clear_invoice_categories()
+    return {"success": True, "data": {"deleted": deleted}, "message": f"已清空 {deleted} 条记录"}

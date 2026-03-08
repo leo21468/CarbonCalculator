@@ -867,12 +867,12 @@ class PdfInvoiceParser(BaseInvoiceParser):
                     # 另一个 *XX*YY 格式行 → 新商品，停止合并
                     if nxt.startswith("*"):
                         break
-                    # 名称续行：不是纯数字/货币行、不是税率、不含新 *类别* 格式、长度≤20
+                    # 名称续行：不是纯数字/货币行、不是税率、不含新 *类别* 格式、长度≤50（与表格路径一致）
                     # 允许含数字的续行（如型号 500g、100mAh）
                     if (not _pure_num_re.match(nxt)
                             and not re.search(r'\d+(?:\.\d+)?%', nxt)
                             and not nxt.startswith('*')
-                            and len(nxt) <= 20):
+                            and len(nxt) <= 50):
                         merged = merged + nxt
                         j += 1
                         continue
@@ -880,6 +880,17 @@ class PdfInvoiceParser(BaseInvoiceParser):
                     merged = merged + " " + nxt
                     j += 1
                     break
+                # 向前看：若 merged_lines 末尾有不以 * 开头的短行（续行），并入当前名称（放在 * 行后，便于正则匹配）
+                prefix_parts = []
+                while merged_lines:
+                    last = (merged_lines[-1] or "").strip()
+                    if not last or last.startswith("*") or len(last) > 50:
+                        break
+                    if re.search(r"\d+\.\d+", last) or any(kw in last for kw in _INVOICE_NON_ITEM_KEYWORDS):
+                        break
+                    prefix_parts.append(merged_lines.pop())
+                if prefix_parts:
+                    merged = merged + " " + " ".join(reversed(prefix_parts))
                 merged_lines.append(merged)
                 i = j
             else:
@@ -920,12 +931,10 @@ class PdfInvoiceParser(BaseInvoiceParser):
                 i += 1
         processed_text = "\n".join(merged_lines)
 
-        # Pattern 1: *类别*名称 或 **类别**名称 + numbers
-        # 使用前瞻断言确保名称行后续有数字（避免纯文本行误匹配），
-        # 不强制要求中间部分格式——兼容规格编码含字母数字混合的情况（如 M3、SCSAW4、8#-32*1/2）
-        # [^*\n]+ 限制类别名不跨行，避免规格中的 * 字符（如 8#-32*1/2）被误认为类别分隔符
+        # Pattern 1: *类别*名称 或 **类别**名称 + numbers；名称可含空格（续行如 头内六角）
+        # 使用前瞻：名称在遇到「空格+数字」前结束，避免把数量/金额吃进名称
         pattern = re.compile(
-            r"(\*+[^*\n]+\*+[^\s]*)(?=[^\n]*\d)"  # name + 前瞻：同行有数字
+            r"(\*+[^*\n]+\*+[^\n]*?)(?=\s+\d+(?:\.\d+)?(?:\s|$))"
         )
         for m in pattern.finditer(processed_text):
             name = m.group(1).strip()

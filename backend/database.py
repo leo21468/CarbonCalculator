@@ -290,3 +290,14 @@ def get_invoice_category_stats() -> Dict[str, dict]:
         }
     finally:
         conn.close()
+
+
+def clear_invoice_categories() -> int:
+    """清空所有发票类别记录，返回删除的行数。"""
+    conn = get_connection()
+    try:
+        cur = conn.execute("DELETE FROM invoice_categories")
+        conn.commit()
+        return cur.rowcount
+    finally:
+        conn.close()
