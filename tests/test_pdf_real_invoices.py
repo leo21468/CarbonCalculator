@@ -1,8 +1,8 @@
 """
-真实 PDF 发票批量测试。
-遍历 pdf-test/ 下所有 .pdf 文件，对每张发票用 PdfInvoiceParser 解析并验证。
-当正常解析无明细时，会尝试用 OCR 再解析一次（需 pip install paddleocr），
-这样 12 个原本 skip 的用例在安装 OCR 后也会真正跑。
+真实 PDF/OFD/XML 发票批量测试。
+遍历 pdf-test/ 下所有 .pdf、.ofd、.xml 文件，对每张发票解析并验证。
+PDF 使用 PdfInvoiceParser；OFD/XML 使用 parse_invoice_from_ofd / parse_invoice_from_xml。
+当 PDF 正常解析无明细时，会尝试用 OCR 再解析一次（需 pip install paddleocr）。
 """
 import sys
 from pathlib import Path
@@ -22,8 +22,41 @@ def get_test_pdf_files():
     return sorted(PDF_DIR.glob("*.pdf"))
 
 
+def get_test_invoice_files():
+    """返回 pdf-test/ 下所有发票文件：(path, 'pdf'|'ofd'|'xml') 列表，已排序"""
+    if not PDF_DIR.exists():
+        return []
+    out = []
+    for ext in ("pdf", "ofd", "xml"):
+        out.extend((p, ext) for p in sorted(PDF_DIR.glob(f"*.{ext}")))
+    return sorted(out, key=lambda x: (x[0].name.lower(), x[1]))
+
+
 def _pdf_id(path: Path) -> str:
     return path.name
+
+
+def _invoice_id(item):
+    """parametrize id: (path, ext) -> path.name"""
+    path, _ = item
+    return path.name
+
+
+def _parse_invoice(path: Path, ext: str):
+    """根据扩展名解析发票，返回 Invoice。"""
+    from src.invoice_parser import (
+        PdfInvoiceParser,
+        parse_invoice_from_ofd,
+        parse_invoice_from_xml,
+    )
+    raw = path.read_bytes()
+    if ext == "pdf":
+        return PdfInvoiceParser().parse(raw)
+    if ext == "ofd":
+        return parse_invoice_from_ofd(raw)
+    if ext == "xml":
+        return parse_invoice_from_xml(raw)
+    raise ValueError(f"unsupported extension: {ext}")
 
 
 def _try_ocr_fallback(parser, pdf_path):
@@ -119,6 +152,45 @@ def test_real_invoice_parses_correctly(pdf_file):
             f"{pdf_file.name}: total_amount({invoice.total_amount:.2f}) "
             f"与各行金额之和({sum_amounts:.2f}) 误差 {error_ratio:.1%} 超过 10%"
         )
+
+
+@pytest.mark.parametrize("invoice_item", get_test_invoice_files(), ids=_invoice_id)
+def test_real_invoice_all_formats_parse(invoice_item):
+    """对 pdf-test 下 PDF/OFD/XML 均能解析且至少 1 条明细（OFD/XML 无 OCR 回退）"""
+    from src.invoice_parser import PdfInvoiceParser
+
+    path, ext = invoice_item
+    try:
+        invoice = _parse_invoice(path, ext)
+    except Exception as exc:
+        pytest.fail(f"解析 {path.name} ({ext}) 时抛出异常: {exc}")
+
+    # PDF 无明细时尝试 OCR 再解析
+    if ext == "pdf" and not invoice.lines:
+        parser = PdfInvoiceParser()
+        inv_ocr, _ = _try_ocr_fallback(parser, path)
+        if inv_ocr and inv_ocr.lines:
+            invoice = inv_ocr
+        else:
+            pytest.skip(f"{path.name}: PDF 无可提取文本（可能为图片型，需 pip install paddleocr）")
+
+    # OFD 无明细时跳过：部分 OFD 仅含版式/图片，未嵌入 EInvoice XML
+    if ext == "ofd" and not invoice.lines:
+        pytest.skip(f"{path.name}: OFD 内未找到嵌入式发票 XML（可能仅为版式文件）")
+
+    # 至少 1 条明细行
+    assert len(invoice.lines) >= 1, (
+        f"{path.name} ({ext}): 应至少有 1 条明细行，实际 lines={len(invoice.lines)}"
+    )
+    for line in invoice.lines:
+        assert "\n" not in (line.name or ""), f"{path.name}: 明细名称不应含换行"
+        assert line.amount > 0, f"{path.name}: 明细金额应 > 0, 实际={line.amount}"
+    assert invoice.total_amount > 0, f"{path.name}: total_amount 应 > 0"
+    sum_amounts = sum(l.amount for l in invoice.lines)
+    if sum_amounts > 0:
+        err = abs(invoice.total_amount - sum_amounts) / sum_amounts
+        assert err < 0.1, f"{path.name}: total 与 sum(lines) 误差 {err:.1%} 超过 10%"
+    print(f"\n{path.name} ({ext}): {len(invoice.lines)} 行, total={invoice.total_amount:.2f}")
 
 
 # ---------------------------------------------------------------------------

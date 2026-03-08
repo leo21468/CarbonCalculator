@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<EInvoice>
+<Header>
+<EIid>26317000000173010289</EIid>
+<EInvoiceTag>SWEI3100</EInvoiceTag>
+</Header>
+<EInvoiceData>
+<SellerInformation>
+<SellerName>上海城投水务（集团）有限公司</SellerName>
+</SellerInformation>
+<BuyerInformation>
+<BuyerName>梁少华</BuyerName>
+</BuyerInformation>
+<BasicInformation>
+<TotalTax-includedAmount>22.5</TotalTax-includedAmount>
+<RequestTime>2026-03-02 00:00:00</RequestTime>
+</BasicInformation>
+<IssuItemInformation>
+<ItemName>*水冰雪*用水费</ItemName>
+<Quantity>10</Quantity>
+<Amount>21.84</Amount>
+<TaxClassificationCode>1100301010000000000</TaxClassificationCode>
+</IssuItemInformation>
+</EInvoiceData>
+<TaxSupervisionInfo>
+<InvoiceNumber>26317000000173010289</InvoiceNumber>
+<IssueTime>2026-03-02</IssueTime>
+</TaxSupervisionInfo>
+</EInvoice>

@@ -316,15 +316,36 @@ def parse_invoice_from_xml(content: bytes) -> "Invoice":
         return None
 
     def find_all_items(parent):
-        for tag in ("lines", "items", "FPMX", "FPDetail"):
+        # EInvoice 格式：根为 EInvoice，明细为多个 IssuItemInformation（每个为一行）
+        items_einvoice = [
+            e for e in parent.iter()
+            if (e.tag.split("}")[-1] if "}" in e.tag else e.tag) == "IssuItemInformation"
+        ]
+        if items_einvoice:
+            return items_einvoice
+        # 先找直接子容器
+        for tag in ("lines", "items", "FPMX", "FPDetail", "Detail", "Items", "Goods",
+                    "COMMON_FPKJ_XMXXS", "FPKJXX_XMXXS", "FPMXXZ_XMXXS"):
             container = parent.find(tag)
             if container is not None:
-                return list(container) or []
+                return list(container)
+        # 递归：任意层级找第一个明细容器
+        for elem in parent.iter():
+            local = elem.tag.split("}")[-1] if "}" in elem.tag else elem.tag
+            if local in ("COMMON_FPKJ_XMXXS", "FPKJXX_XMXXS", "FPMXXZ_XMXXS", "FPMX", "FPDetail", "lines", "items"):
+                return list(elem)
         return []
 
-    inv.invoice_number = find_text(root, "invoice_number", "number")
-    inv.invoice_code = find_text(root, "invoice_code")
-    inv.date = find_text(root, "date")
+    # 明细行可能的子元素标签（一行一条）
+    item_row_tags = ("item", "Item", "Goods", "row", "FPMX", "IssuItemInformation",
+                     "COMMON_FPKJ_XMX", "FPKJXX_XMXX", "FPMXXZ_XMXX")
+    name_tags = ("name", "spmc", "xmmc", "XMMC", "goodsName", "ItemName")
+    amount_tags = ("amount", "je", "XMJE", "xmje", "hjje", "price", "XMDJ", "Amount", "TotaltaxIncludedAmount")
+    tax_tags = ("tax_classification_code", "spbm", "SPBM", "taxCode", "TaxClassificationCode")
+
+    inv.invoice_number = find_text(root, "invoice_number", "number", "fphm", "FPHM", "EIid", "InvoiceNumber")
+    inv.invoice_code = find_text(root, "invoice_code", "fpdm", "FPDM")
+    inv.date = find_text(root, "date", "kprq", "KPRQ", "invoiceDate", "IssueTime", "RequestTime")
     seller_name = None
     se = root.find("seller")
     if se is not None:
@@ -332,10 +353,10 @@ def parse_invoice_from_xml(content: bytes) -> "Invoice":
         if name_el is not None and name_el.text and name_el.text.strip():
             seller_name = name_el.text.strip()
     if not seller_name:
-        seller_name = find_text(root, "seller", "xfmc", "sellerName")
+        seller_name = find_text(root, "seller", "xfmc", "sellerName", "XFMC", "SellerName")
     if seller_name:
         inv.seller = SellerInfo(name=seller_name)
-    total = find_text(root, "total_amount")
+    total = find_text(root, "total_amount", "totalAmount", "hjje", "HJJE", "TotalTax-includedAmount", "TotaltaxIncludedAmount")
     if total:
         try:
             inv.total_amount = float(total)
@@ -344,19 +365,19 @@ def parse_invoice_from_xml(content: bytes) -> "Invoice":
 
     for node in find_all_items(root):
         tag = node.tag.split("}")[-1] if "}" in node.tag else node.tag
-        if tag not in ("item", "Item", "Goods", "row", "FPMX"):
+        if tag not in item_row_tags:
             continue
-        name = find_text(node, "name", "spmc", "xmmc")
+        name = find_text(node, *name_tags)
         if not name:
             continue
-        amount_s = find_text(node, "amount", "je")
+        amount_s = find_text(node, *amount_tags)
         amount = 0.0
         if amount_s:
             try:
                 amount = float(amount_s)
             except (ValueError, TypeError):
                 pass
-        tax_code = find_text(node, "tax_classification_code", "spbm")
+        tax_code = find_text(node, *tax_tags)
         inv.lines.append(InvoiceLineItem(name=name, tax_classification_code=tax_code, amount=amount))
     if inv.lines and not inv.total_amount:
         inv.total_amount = sum(l.amount for l in inv.lines)
@@ -375,7 +396,15 @@ def parse_invoice_from_ofd(content: bytes) -> "Invoice":
     for name in (n for n in zf.namelist() if n.endswith(".xml") and "__MACOSX" not in n):
         try:
             raw = zf.read(name)
-            if b"invoice_number" in raw or b"Invoice" in raw or b"lines" in raw or b"FPMX" in raw:
+            # 放宽条件：含常见发票关键字之一即可尝试解析
+            if (
+                b"invoice_number" in raw or b"Invoice" in raw or b"lines" in raw
+                or b"FPMX" in raw or b"FPDetail" in raw or b"Item" in raw
+                or b"COMMON_FPKJ_XMXXS" in raw or b"XMMC" in raw or b"XMJE" in raw
+                or b"invoiceNumber" in raw or b"totalAmount" in raw
+                or b"EInvoice" in raw or b"EInvoiceData" in raw or b"IssuItemInformation" in raw
+                or b"ItemName" in raw or b"TaxSupervisionInfo" in raw
+            ):
                 sub = parse_invoice_from_xml(raw)
                 if sub.lines or sub.invoice_number:
                     zf.close()
