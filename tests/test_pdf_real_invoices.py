@@ -1,7 +1,8 @@
 """
 真实 PDF 发票批量测试。
 遍历 pdf-test/ 下所有 .pdf 文件，对每张发票用 PdfInvoiceParser 解析并验证。
-图片型 PDF（无可提取文本）标记为 skip 而非 fail。
+当正常解析无明细时，会尝试用 OCR 再解析一次（需 pip install paddleocr），
+这样 12 个原本 skip 的用例在安装 OCR 后也会真正跑。
 """
 import sys
 from pathlib import Path
@@ -25,6 +26,42 @@ def _pdf_id(path: Path) -> str:
     return path.name
 
 
+def _try_ocr_fallback(parser, pdf_path):
+    """当正常解析无明细时，尝试 OCR 再解析。返回 (invoice, used_ocr)。"""
+    import pdfplumber
+    from src.models import Invoice
+    with pdfplumber.open(pdf_path) as pdf:
+        all_tables = []
+        for page in pdf.pages:
+            all_tables.extend(page.extract_tables() or [])
+        try:
+            ocr_text, ocr_structured = parser._ocr_pdf(pdf)
+        except ImportError:
+            return None, False
+        except Exception:
+            return None, True
+        if not ocr_text.strip():
+            return None, True
+    lines = parser._extract_lines_from_tables(all_tables, ocr_text)
+    if not lines or all(l.amount <= 0 for l in lines):
+        lines = []
+        if ocr_structured:
+            lines = parser._extract_lines_from_ocr_structured(
+                ocr_structured, lenient_from_ocr=True
+            )
+        if not lines:
+            lines = parser._extract_lines_from_text(ocr_text, lenient_from_ocr=True)
+    lines = parser._dedup_lines(lines)
+    lines = parser._post_filter_lines(lines)
+    if not lines:
+        return None, True
+    total = sum(l.amount for l in lines)
+    inv = Invoice(source_format="PDF")
+    inv.lines = lines
+    inv.total_amount = total
+    return inv, True
+
+
 # ---------------------------------------------------------------------------
 # 基本解析测试
 # ---------------------------------------------------------------------------
@@ -40,9 +77,13 @@ def test_real_invoice_parses_correctly(pdf_file):
     except Exception as exc:
         pytest.fail(f"解析 {pdf_file.name} 时抛出异常: {exc}")
 
-    # 无明细行（图片型 PDF，无文本可提取）→ 标记为 skip
+    # 无明细行时尝试 OCR 再解析（安装 paddleocr 后 12 个 skip 会真正跑）
     if not invoice.lines:
-        pytest.skip(f"{pdf_file.name}: 无可提取文本（可能为图片型 PDF，需 OCR）")
+        inv_ocr, _ = _try_ocr_fallback(parser, pdf_file)
+        if inv_ocr and inv_ocr.lines:
+            invoice = inv_ocr
+        else:
+            pytest.skip(f"{pdf_file.name}: 无可提取文本（可能为图片型 PDF，需 pip install paddleocr）")
 
     # 打印解析摘要（pytest -s 时可见）
     print(f"\n{pdf_file.name}: {len(invoice.lines)} 行, total={invoice.total_amount:.2f}")
@@ -94,8 +135,13 @@ def test_real_invoice_scope_classification(pdf_file):
     parser = PdfInvoiceParser()
     invoice = parser.parse(pdf_file)
 
+    # 无明细时尝试 OCR 再解析
     if not invoice.lines:
-        pytest.skip(f"{pdf_file.name}: 无可提取文本（可能为图片型 PDF，需 OCR）")
+        inv_ocr, _ = _try_ocr_fallback(parser, pdf_file)
+        if inv_ocr and inv_ocr.lines:
+            invoice = inv_ocr
+        else:
+            pytest.skip(f"{pdf_file.name}: 无可提取文本（可能为图片型 PDF，需 pip install paddleocr）")
 
     pipeline = CarbonAccountingPipeline()
     result = pipeline.process_invoice(invoice)

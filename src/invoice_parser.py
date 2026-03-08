@@ -44,7 +44,9 @@ _CN_VAT_RATES = frozenset({1, 3, 5, 6, 9, 10, 11, 13, 16, 17})
 # 例如 OCR 将「1.25kg」拆为「1.25」和「kg」两行，「kg」即为单位令牌
 _RE_UNIT_TOKEN = re.compile(r'^[a-zA-Z]{1,6}$')
 # 中文单位单字/短词（OCR 常将「9元」「14队」拆成两行），与数字同行或下一行时合并进名称、不作为金额
-_RE_CN_UNIT = re.compile(r'^[元队型瓶个只支盒包袋箱桶罐条张本台件套号克升度块根卷组副双听]$')
+_RE_CN_UNIT = re.compile(r'^[元队型瓶个只支盒包袋箱桶罐条张本台件套号克升度块根卷组副双听粒]$')
+# 单行金额合理上限（元）：超过则多为发票代码/号码被误解析为金额
+_MAX_REASONABLE_AMOUNT_CNY = 10_000_000.0
 
 # 判断是否为「仅单位」或「仅规格/尺寸」行——这类行不应并入商品名称，应单独成列/行
 def _is_unit_only_line(s: str) -> bool:
@@ -58,7 +60,7 @@ def _is_unit_only_line(s: str) -> bool:
 
 
 def _is_spec_or_dimension_line(s: str) -> bool:
-    """整行像规格/尺寸（M6、400g、8*22、规格 xxx）时返回 True，不应并入名称。"""
+    """整行像规格/尺寸（M6、400g、8*22、8#-32*1/2 美制螺纹、规格 xxx）时返回 True，不应并入名称。"""
     if not s or not isinstance(s, str):
         return False
     t = s.strip()
@@ -69,6 +71,9 @@ def _is_spec_or_dimension_line(s: str) -> bool:
     if re.match(r"^[A-Za-z]?\d+(?:\.\d+)?[A-Za-z]*$", t):
         return True
     if re.match(r"^\d+\s*\*\s*\d+", t) or re.match(r"^\d+\s*\*\s*\d+\s*\*\s*\d+", t):
+        return True
+    # 美制螺纹等：8#-32*1/2、10#-32*3/8
+    if re.match(r"^\d+#\s*-\s*\d+\s*\*", t) or re.search(r"\d+#\s*-\s*\d+\s*\*\s*\d+", t):
         return True
     return False
 
@@ -107,6 +112,8 @@ _INVOICE_NON_ITEM_KEYWORDS = (
     "备注", "收款人", "复核",
     "税务局",          # Issue 4: 过滤含税务机构名称的行（如上海市税务局）
     "名称", "项目名称",  # Issue 5: 过滤表头类标签行
+    "社会信用代码", "纳税人识别号", "统一社会信用代码",  # 纯图 PDF OCR 常误抽出
+    "电子票", "电子发票", "项目方称", "普通发票",  # OCR 表头/页眉误识别为商品名
 )
 
 from .models import Invoice, InvoiceLineItem, SellerInfo
@@ -197,10 +204,20 @@ def _seller_from_dict(d: dict) -> SellerInfo:
 
 
 def _normalize_name_single_line(name: str) -> str:
-    """将多行名称合并为一行：任意空白（含换行）替换为单个空格并 strip。"""
+    """将多行名称合并为一行，并去掉末尾的规格/单位词。"""
     if not name:
         return ""
-    return " ".join(str(name).split()).strip()
+    s = " ".join(str(name).split()).strip()
+    return _drop_trailing_spec_unit_from_name(s) or s
+
+
+def _drop_trailing_spec_unit_from_name(name: str) -> str:
+    """从名称中去掉「规格/尺寸」和「单位」词（任意位置），避免 8#-32*1/2、粒 等进名称。"""
+    if not name or not name.strip():
+        return name
+    parts = name.split()
+    kept = [p for p in parts if not (_is_unit_only_line(p) or _is_spec_or_dimension_line(p))]
+    return " ".join(kept).strip() or name.strip()
 
 
 def _line_from_dict(d: dict) -> InvoiceLineItem:
@@ -986,6 +1003,19 @@ class PdfInvoiceParser(BaseInvoiceParser):
         )
         for m in pattern.finditer(processed_text):
             name = m.group(1).strip()
+            # 下一行若为名称续行（如「头内六角」），并入名称（9.95元 PDF 中续行在金额行下一行）
+            name_end = m.start(1) + len(m.group(1))
+            eol = processed_text.find('\n', name_end)
+            if eol != -1:
+                next_line_start = eol + 1
+                next_eol = processed_text.find('\n', next_line_start)
+                next_line = processed_text[next_line_start: next_eol if next_eol != -1 else len(processed_text)].strip()
+                if (next_line and len(next_line) <= 20 and not next_line.startswith("*")
+                        and not _is_unit_only_line(next_line) and not _is_spec_or_dimension_line(next_line)
+                        and not any(kw in next_line for kw in _INVOICE_NON_ITEM_KEYWORDS)
+                        and not re.search(r"\d+\.\d+", next_line)
+                        and not re.search(r"第\s*\d+", next_line)):
+                    name = name + " " + next_line
             # 非宽松模式时：只有以有效 *类别* 开头（且 * 之间不是尺寸）才算作物体的名称
             if not lenient_from_ocr and not _is_valid_star_category_name(name):
                 continue
@@ -1246,6 +1276,11 @@ class PdfInvoiceParser(BaseInvoiceParser):
             if not all_nums:
                 continue
 
+            # 排除发票代码/号码等误解析的超大数值（单行金额合理上限）
+            all_nums = [n for n in all_nums if 0 < n <= _MAX_REASONABLE_AMOUNT_CNY]
+            if not all_nums:
+                continue
+
             # 空间位置启发式：列序为 项目名称、规格型号、单位、数量、单价、金额、税率、税额
             def looks_like_amount(v: float) -> bool:
                 """金额通常有 2 位小数，且为正值"""
@@ -1278,7 +1313,37 @@ class PdfInvoiceParser(BaseInvoiceParser):
                 quantity = None
                 unit_price = None
 
-            if amount and amount > 0:
+            # 向后看：下一行若为名称续行（短文本、非新*类别*、无独立金额），合并进当前名称
+            _peek = ri + 1
+            while _peek < len(all_rows) and _peek not in consumed_next:
+                _next_row = all_rows[_peek]
+                _next_cols = _next_row.get("columns", [])
+                _next_name = ""
+                if name_col_idx < len(_next_cols) and _next_cols[name_col_idx].strip():
+                    _next_name = _next_cols[name_col_idx].strip()
+                if not _next_name:
+                    for _col in _next_cols:
+                        _c = (_col or "").strip()
+                        if _c and _re_has_chinese.search(_c) and not _re_pure_number.match(_c):
+                            _next_name = _c
+                            break
+                if not _next_name or len(_next_name) > 30:
+                    break
+                if _re_name_prefix.search(_next_name) and _is_valid_star_category_name(_next_name):
+                    break
+                if any(kw in _next_name for kw in _INVOICE_NON_ITEM_KEYWORDS):
+                    break
+                if _is_unit_only_line(_next_name) or _is_spec_or_dimension_line(_next_name):
+                    break
+                _next_nums = _gather_nums(_next_cols, name_col_idx)
+                _next_nums = [n for n in _next_nums if 0 < n <= _MAX_REASONABLE_AMOUNT_CNY]
+                if _next_nums:
+                    break
+                name_val = name_val + _next_name
+                consumed_next.add(_peek)
+                _peek += 1
+
+            if amount and amount > 0 and amount <= _MAX_REASONABLE_AMOUNT_CNY:
                 items.append(InvoiceLineItem(
                     name=_normalize_name_single_line(name_val),
                     tax_classification_name=_normalize_name_single_line(name_val),
@@ -1438,7 +1503,8 @@ class PdfInvoiceParser(BaseInvoiceParser):
                     # 增值税发票固定列顺序（税率行已被 tax_rate_pat 过滤）：
                     # 数量, 单价, 金额（不含税）, 税额
                     # → 金额取倒数第二个，单价取倒数第三个，数量取第一个
-                    reasonable_nums = [v for v in plain_numbers if has_reasonable_decimals(v)]
+                    # 排除发票代码/号码等误解析的超大数值
+                    reasonable_nums = [v for v in plain_numbers if has_reasonable_decimals(v) and 0 < v <= _MAX_REASONABLE_AMOUNT_CNY]
                     if len(reasonable_nums) >= 3:
                         # 标准格式：数量、单价、金额、税额（4个）或 单价、金额、税额（3个）
                         quantity = reasonable_nums[0] if len(reasonable_nums) >= 4 else None
@@ -1465,7 +1531,7 @@ class PdfInvoiceParser(BaseInvoiceParser):
                         quantity = None
                         unit_price = None
                         amount = None
-                    if name and amount is not None and amount > 0:
+                    if name and amount is not None and amount > 0 and amount <= _MAX_REASONABLE_AMOUNT_CNY:
                         items.append(InvoiceLineItem(
                             name=_normalize_name_single_line(name),
                             tax_classification_name=name,
@@ -1545,6 +1611,9 @@ class PdfInvoiceParser(BaseInvoiceParser):
             if _RE_TAX_AUTHORITY.search(name):
                 continue
             if line.amount <= 0:
+                continue
+            # 过滤超大金额（多为 OCR 将发票代码/号码误解析为金额）
+            if line.amount > _MAX_REASONABLE_AMOUNT_CNY:
                 continue
             # Issue 3: 过滤金额看起来像 8 位纯数字日期（YYYYMMDD，范围 20000101-20991231）
             amt_int = int(line.amount)
