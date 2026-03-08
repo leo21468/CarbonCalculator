@@ -796,6 +796,21 @@ class TestIdenticalNameDifferentAmountLines:
         assert "头内六角" in items[0].name
         assert "合计" not in items[0].name
 
+    def test_continuation_before_star_line_merged_by_look_back(self):
+        """表格路径：不以*开头的「仅名称」行若在有金额的*行之前，应通过向前看合并到该*行后（否则会被忽略）"""
+        parser = PdfInvoiceParser()
+        header = ["货物或应税劳务名称", "数量", "单位", "单价", "金额", "税率", "税额"]
+        rows = [
+            ["头内六角", "", "", "", "", "", ""],
+            ["*金属制品*10.9级美制圆", "14", "个", "0.225", "3.15", "13%", "0.41"],
+        ]
+        tables = [[header] + rows]
+        items = parser._extract_lines_from_tables(tables, "")
+        assert len(items) == 1, f"应有1条明细（前行续行已合并），实际 {len(items)} 条: {[i.name for i in items]}"
+        assert "头内六角" in items[0].name
+        assert "*金属制品*" in items[0].name
+        assert abs(items[0].amount - 3.15) < 0.01
+
     def test_vat_rate_integer_not_parsed_as_amount(self):
         """表格路径：税率列值 13（无%符号）不应被解析为商品金额"""
         parser = PdfInvoiceParser()

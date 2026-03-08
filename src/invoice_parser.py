@@ -745,6 +745,32 @@ class PdfInvoiceParser(BaseInvoiceParser):
                         pending_name_parts = []
                     else:
                         full_name = name or ""
+                    # 向前看：前面若有不以 * 开头的「仅名称、无金额」行，视为本商品名的前缀续行，合并进来（否则这类行会被忽略）
+                    back_names: List[str] = []
+                    back = idx - 1
+                    while back >= 0 and back not in consumed and merged_rows[back] is not None:
+                        prev_row = merged_rows[back]
+                        prev_str = [str(c).strip() if c else "" for c in prev_row]
+                        prev_name = prev_str[name_col] if name_col < len(prev_str) else ""
+                        if not prev_name or not prev_name.strip():
+                            back -= 1
+                            continue
+                        if _is_valid_star_category_name(prev_name):
+                            break
+                        if any(kw in prev_name for kw in _INVOICE_NON_ITEM_KEYWORDS):
+                            break
+                        if len(prev_name.strip()) > 50:
+                            break
+                        prev_amt_cell = prev_str[amount_col] if amount_col is not None and amount_col < len(prev_str) else ""
+                        prev_nums = self._parse_numbers_from_cell(prev_amt_cell)
+                        prev_amt = prev_nums[-1] if prev_nums else (self._parse_number(prev_amt_cell) or 0)
+                        if prev_amt and prev_amt > 0:
+                            break
+                        back_names.append(prev_name.strip())
+                        consumed.add(back)
+                        back -= 1
+                    if back_names:
+                        full_name = full_name + " " + " ".join(back_names)
                     # 向后看：下一行若仅为名称续行（无金额、且非新 *类别*），合并进 full_name；可多行连续合并，直到遇到新 *类别* 或无关信息
                     peek = idx + 1
                     while peek < len(merged_rows) and merged_rows[peek] is not None:
