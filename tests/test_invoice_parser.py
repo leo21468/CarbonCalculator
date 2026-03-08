@@ -739,6 +739,63 @@ class TestIdenticalNameDifferentAmountLines:
         assert abs(amounts[1] - 2.94) < 0.01
         assert abs(amounts[2] - 3.15) < 0.01
 
+    def test_name_continuation_on_next_row_merged_table_path(self):
+        """表格路径：本行有名称+金额时，下一行若仅为名称续行（无金额），应合并为一条明细（如 9.95元+14队 英制螺丝）"""
+        parser = PdfInvoiceParser()
+        header = ["货物或应税劳务名称", "数量", "单位", "单价", "金额", "税率", "税额"]
+        rows = [
+            ["*金属制品*10.9级美制圆", "14", "个", "0.225", "3.15", "13%", "0.41"],
+            ["头内六角", "", "", "", "", "", ""],
+            ["*金属制品*10.9级美制圆", "14", "个", "0.21", "2.94", "13%", "0.38"],
+            ["头内六角", "", "", "", "", "", ""],
+            ["*金属制品*10.9级美制圆", "14", "个", "0.194", "2.72", "13%", "0.35"],
+            ["头内六角", "", "", "", "", "", ""],
+        ]
+        tables = [[header] + rows]
+        items = parser._extract_lines_from_tables(tables, "")
+        assert len(items) == 3, f"应有3条明细（续行已合并），实际 {len(items)} 条: {[i.name for i in items]}"
+        for it in items:
+            assert "头内六角" in it.name, f"名称应包含续行「头内六角」: {it.name}"
+            assert it.name.count("\n") == 0 and it.name.count("\r") == 0
+        amounts = sorted(i.amount for i in items)
+        assert abs(amounts[0] - 2.72) < 0.01 and abs(amounts[1] - 2.94) < 0.01 and abs(amounts[2] - 3.15) < 0.01
+
+    def test_multiple_continuation_lines_merged_until_new_category_or_irrelevant(self):
+        """表格路径：多行续行（无金额、非新*类别*）均合并；遇到新*类别*或合计等无关信息则停止"""
+        parser = PdfInvoiceParser()
+        header = ["货物或应税劳务名称", "数量", "单位", "单价", "金额", "税率", "税额"]
+        rows = [
+            ["*金属制品*10.9级美制圆", "14", "个", "0.225", "3.15", "13%", "0.41"],
+            ["头内六角", "", "", "", "", "", ""],
+            ["螺丝", "", "", "", "", "", ""],
+            ["规格 M6", "", "", "", "", "", ""],
+            ["*金属制品*另一商品", "1", "个", "2.00", "2.00", "13%", "0.26"],
+        ]
+        tables = [[header] + rows]
+        items = parser._extract_lines_from_tables(tables, "")
+        assert len(items) == 2, f"应有2条明细，实际 {len(items)} 条: {[i.name for i in items]}"
+        first = items[0]
+        assert "头内六角" in first.name and "螺丝" in first.name and "规格 M6" in first.name, (
+            f"第一条应合并多行续行: {first.name}"
+        )
+        assert "另一商品" in items[1].name
+        assert items[0].amount == 3.15 and items[1].amount == 2.00
+
+    def test_continuation_stops_at_total_row(self):
+        """表格路径：向后看合并时遇到「合计」等非商品行则停止，不把合计并入名称"""
+        parser = PdfInvoiceParser()
+        header = ["货物或应税劳务名称", "数量", "单位", "单价", "金额", "税率", "税额"]
+        rows = [
+            ["*金属制品*10.9级美制圆", "14", "个", "0.225", "3.15", "13%", "0.41"],
+            ["头内六角", "", "", "", "", "", ""],
+            ["合计", "", "", "", "3.15", "", "0.41"],
+        ]
+        tables = [[header] + rows]
+        items = parser._extract_lines_from_tables(tables, "")
+        assert len(items) == 1, f"应只有1条明细（合计行不并入），实际 {len(items)} 条"
+        assert "头内六角" in items[0].name
+        assert "合计" not in items[0].name
+
     def test_vat_rate_integer_not_parsed_as_amount(self):
         """表格路径：税率列值 13（无%符号）不应被解析为商品金额"""
         parser = PdfInvoiceParser()

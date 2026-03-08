@@ -21,7 +21,7 @@ from __future__ import annotations
 import re
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import List, Optional, Union
+from typing import List, Optional, Set, Union
 
 # 预编译常用正则，提升性能（在 parse_amount_cny、_parse_number 及文本解析中复用）
 _RE_PERCENT = re.compile(r'\d+(?:\.\d+)?%')   # 税率百分比（如"13%"）
@@ -693,10 +693,12 @@ class PdfInvoiceParser(BaseInvoiceParser):
                         continue
                 merged_rows.append(row)
 
-            # 第二遍：将「仅有名称、无金额」的行与下一行（有金额）合并为一个商品名
+            # 第二遍：将「仅有名称、无金额」的行与下一行（有金额）合并为一个商品名；
+            # 若本行已有名称+金额，则向后看：下一行若仅为名称续行（无金额），也合并进本行
             pending_name_parts: List[str] = []
-            for row in merged_rows:
-                if row is None:
+            consumed: Set[int] = set()  # 已被合并到上一行的行索引，不再单独处理
+            for idx, row in enumerate(merged_rows):
+                if row is None or idx in consumed:
                     continue
                 row_str = [str(c).strip() if c else "" for c in row]
                 name = row_str[name_col] if name_col < len(row_str) else ""
@@ -743,6 +745,32 @@ class PdfInvoiceParser(BaseInvoiceParser):
                         pending_name_parts = []
                     else:
                         full_name = name or ""
+                    # 向后看：下一行若仅为名称续行（无金额、且非新 *类别*），合并进 full_name；可多行连续合并，直到遇到新 *类别* 或无关信息
+                    peek = idx + 1
+                    while peek < len(merged_rows) and merged_rows[peek] is not None:
+                        next_row = merged_rows[peek]
+                        next_str = [str(c).strip() if c else "" for c in next_row]
+                        next_name = next_str[name_col] if name_col < len(next_str) else ""
+                        if not next_name or not next_name.strip():
+                            peek += 1
+                            continue
+                        # 遇到新 *类别* 则停止合并
+                        if _is_valid_star_category_name(next_name):
+                            break
+                        # 屏蔽无关信息：合计/购方/销方/发票等非商品行
+                        if any(kw in next_name for kw in _INVOICE_NON_ITEM_KEYWORDS):
+                            break
+                        # 单行过长视为备注/地址等，不合并
+                        if len(next_name.strip()) > 50:
+                            break
+                        next_amt_cell = next_str[amount_col] if amount_col is not None and amount_col < len(next_str) else ""
+                        next_nums = self._parse_numbers_from_cell(next_amt_cell)
+                        next_amt = next_nums[-1] if next_nums else (self._parse_number(next_amt_cell) or 0)
+                        if next_amt and next_amt > 0:
+                            break
+                        full_name = full_name + " " + next_name.strip()
+                        consumed.add(peek)
+                        peek += 1
                     if not full_name.strip():
                         continue
                     # 只有以 *XXX* 开头且中间不是尺寸（如 8*22*7）才算作物体
@@ -764,6 +792,10 @@ class PdfInvoiceParser(BaseInvoiceParser):
                 else:
                     # 本行仅有名称、无金额：只有以有效 *类别* 开头才开启/续写同一物体名称
                     if not name or not name.strip():
+                        continue
+                    # 续行过长视为备注等，不拼入
+                    if len(name.strip()) > 50:
+                        pending_name_parts.clear()
                         continue
                     if _is_valid_star_category_name(name):
                         pending_name_parts = [name.strip()]
