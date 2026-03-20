@@ -1,16 +1,15 @@
 /**
- * 办公用水专用核算：从发票提取用水量(吨/m³)并按固定因子计算排放
- *
- * 提取位置：数量栏、备注栏、规格型号栏
- * 正则：/(\d+\.?\d*)\s*(吨|m3|立方米)/i
- * 因子：0.168 kgCO2e/吨（自来水供应相关排放，可根据数据来源调整）
+ * 办公用水：用量×因子。因子默认来自 data/cpcd_scene_factors.json（core 无自来水 m³ 时为历史常数 0.168）。
  */
+
+const { getFactors } = require('./cpcdSceneFactors');
 
 /** 用水量匹配正则 */
 const WATER_REGEX = /(\d+\.?\d*)\s*(吨|m3|立方米|方)/gi;
 
-/** 固定因子：kgCO2e/吨（与立方米 1:1 换算） */
-const WATER_FACTOR_KG_PER_TON = 0.168;
+function waterFactorKgPerTon() {
+  return getFactors().waterKgPerM3;
+}
 
 function normalizeToTons(value, unit) {
   const v = Number(value);
@@ -85,12 +84,13 @@ function calculateWater(invoice) {
   if (extracted.error) return extracted;
 
   const usageTons = extracted.usageTons;
-  const emissionsKg = usageTons * WATER_FACTOR_KG_PER_TON;
+  const wf = waterFactorKgPerTon();
+  const emissionsKg = usageTons * wf;
 
   return {
     emissionsKg: Math.max(0, Math.round(emissionsKg * 100) / 100),
     usageTons,
-    factor: WATER_FACTOR_KG_PER_TON,
+    factor: wf,
     source: extracted.source,
     matchedFrom: extracted.matchedFrom,
   };
@@ -100,5 +100,8 @@ module.exports = {
   extractWaterData,
   calculateWater,
   WATER_REGEX,
-  WATER_FACTOR_KG_PER_TON,
+  waterFactorKgPerTon,
+  get WATER_FACTOR_KG_PER_TON() {
+    return waterFactorKgPerTon();
+  },
 };

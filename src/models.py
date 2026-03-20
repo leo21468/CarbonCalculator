@@ -55,6 +55,8 @@ class Invoice:
     total_amount: float = 0.0
     # 原始格式标识
     source_format: Optional[str] = None  # "OFD" | "PDF" | "XML"
+    # 原始文本（用于票据级元信息提取，如机票 IATA 三字码）
+    raw_text: Optional[str] = None
 
 
 # --------------- 分类与核算结果 ---------------

@@ -28,7 +28,7 @@ class ScopeMappingConfig:
 class EmissionConfig:
     """排放核算相关配置"""
     # 默认电力排放因子 kgCO2/kWh（可替换为省级因子）
-    default_electricity_factor: float = 0.5839
+    default_electricity_factor: float = 0.5777  # 与 data/2024.pdf 表1、grid_carbon_factors.json 全国平均一致
     # 默认热力 kgCO2/GJ 或 kgCO2/MJ
     default_heat_factor: float = 0.11  # 示例，按实际替换
     # EEIO 默认路径（投入产出表因子）

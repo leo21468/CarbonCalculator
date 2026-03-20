@@ -1,19 +1,18 @@
 factor_id,scope,unit,kg_co2e_per_unit,description
-electricity_heat,Scope 2,kWh,0.5839,电力(全国平均或可替换省级)
-heat,Scope 2,GJ,110,热力
-coal,Scope 1,t,2550,原煤
-oil_gas,Scope 1,t,2300,原油/天然气当量
-gas,Scope 1,m3,2.0,燃气(立方米)
-refined_oil,Scope 1,L,2.3,成品油(升)
-water,Scope 3,m3,0.168,市政自来水(GB/T 51366-2019)
-scope3_default,Scope 3,CNY,0.00015,EEIO默认(万元产值kg，此处按元)
-scope3_lease,Scope 3,CNY,0.00012,租赁
-scope3_service,Scope 3,CNY,0.0001,服务/物流
-scope3_office_supply,Scope 3,CNY,0.00025,办公耗材(造纸/文具/计算机设备 EEIO)
-scope3_transport_air,Scope 3,CNY,0.00035,航空差旅 EEIO
-scope3_transport_rail,Scope 3,CNY,0.000055,铁路/高铁差旅 EEIO
-scope3_transport_road,Scope 3,CNY,0.00022,公路/打车/租车 EEIO
-scope3_accommodation,Scope 3,CNY,0.00018,住宿(酒店) EEIO
-scope3_waste,Scope 3,CNY,0.00008,废弃物处理/垃圾清运 EEIO
-scope3_commute,Scope 3,CNY,0.00012,员工通勤(公共交通补贴) EEIO
-gasoline_liter,Scope 1,L,2.295,汽油燃烧(升) 通勤加油发票
+electricity_heat,Scope 2,kWh,0.5777,外购电力全国平均 data/2024.pdf 表1 见 data/grid_carbon_factors.json
+coal,Scope 1,t,2550,原煤（典型值，待替换为官方因子）
+oil_gas,Scope 1,t,3000,原油等开采品占位 t（待按物料细分）
+gas,Scope 1,m3,2.0,天然气燃烧
+refined_oil,Scope 1,L,2.5,成品油体积法平均占位
+gasoline_liter,Scope 1,L,2.3,车用汽油
+water,Scope 3,m3,0.168,办公用水活动数据法（与 waterCalculator 一致，待核验）
+scope3_default,Scope 3,CNY,0.00015,制造业 EEIO 默认
+scope3_lease,Scope 3,CNY,0.00012,租赁服务 EEIO 占位
+scope3_service,Scope 3,CNY,0.00012,通用服务 EEIO 占位
+scope3_office_supply,Scope 3,CNY,0.00015,办公用品 EEIO 占位
+scope3_transport_air,Scope 3,CNY,0.1497,与 core 国内航空差旅-基于支出金额 1.497 tCO2e/万元 换算 kgCO2e/元；见 data/cpcd_scene_factors.json；吨公里优先见 transport_factors.json
+scope3_transport_rail,Scope 3,CNY,0.0443,与 core 国内高铁差旅-基于支出金额 0.443 tCO2e/万元；见 cpcd_scene_factors.json
+scope3_transport_road,Scope 3,CNY,0.05047,公路仅运费时与 core 出租/网约车差旅基于支出金额 0.5047 tCO2e/万元（道路支出代理）；吨公里用 transport.xlsx/transport_factors
+scope3_accommodation,Scope 3,晚,66.52,国内住宿：emission_calculator 优先金额×0.2036 kg/元；无金额时按晚×本值（与 core 63290X001/002 一致）
+scope3_commute,Scope 3,CNY,0.0443,与 invoice-parser 公交/一卡通代理：core 高铁差旅基于支出金额 0.443 tCO2e/万元；见 cpcd_scene_factors.json
+scope3_waste,Scope 3,CNY,0.0419,与 core 市政基础设施 419 kgCO2e/万元 换算（环卫类支出代理）；见 cpcd_scene_factors.json

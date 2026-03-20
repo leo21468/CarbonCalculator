@@ -716,10 +716,46 @@ class PdfInvoiceParser(BaseInvoiceParser):
         ocr_structured = []
         text_from_ocr = False  # 当前 all_text 是否来自 OCR（纯图片/扫描 PDF）
 
+        def _looks_garbled_text(s: str) -> bool:
+            """
+            判断文本是否明显“乱码/编码错误”。
+            典型现象：大量替换字符 '�'，且中文字符很少。
+            """
+            if not s:
+                return True
+            t = s.strip()
+            if not t:
+                return True
+            repl_cnt = t.count("�")
+            if repl_cnt <= 0:
+                return False
+            total_len = len(t)
+            # 经验阈值：替换字符占比足够高，则认为是编码/识别质量问题
+            if (repl_cnt / max(total_len, 1)) >= 0.002:
+                return True
+            return False
+
+        def _lines_look_garbled(lines: list[InvoiceLineItem]) -> bool:
+            if not lines:
+                return False
+            # 任意一条明细名出现大量替换字符，就认为提取质量差
+            total_len = 0
+            repl_cnt = 0
+            for l in lines:
+                name = (getattr(l, "name", "") or "").strip()
+                if not name:
+                    continue
+                total_len += len(name)
+                repl_cnt += name.count("�")
+            if total_len <= 0:
+                return False
+            return (repl_cnt / max(total_len, 1)) >= 0.003
+
         # 纯图片/扫描版 PDF：无文本或文本过短时使用 OCR；或表格为空且文本较短时也尝试 OCR
         _MIN_TEXT_LEN_FOR_OCR = 80
         _MAX_TEXT_WHEN_NO_TABLES = 400
-        if not all_text.strip() or len(all_text.strip()) < _MIN_TEXT_LEN_FOR_OCR:
+        # 额外：若文本明显乱码（如大量 '�'），也强制尝试 OCR
+        if _looks_garbled_text(all_text) or (not all_text.strip()) or len(all_text.strip()) < _MIN_TEXT_LEN_FOR_OCR:
             try:
                 ocr_text, ocr_structured = self._ocr_pdf(pdf)
                 if ocr_text.strip():
@@ -774,7 +810,7 @@ class PdfInvoiceParser(BaseInvoiceParser):
         inv.lines = self._extract_lines_from_tables(all_tables, all_text)
 
         # 若表格解析未得到有效明细行（空或所有金额均为0），回退到文本/OCR提取
-        if not inv.lines or all(l.amount <= 0 for l in inv.lines):
+        if not inv.lines or all(l.amount <= 0 for l in inv.lines) or _lines_look_garbled(inv.lines):
             inv.lines = []  # 清空无效行，避免遮蔽后续回退路径
             if ocr_structured:
                 inv.lines = self._extract_lines_from_ocr_structured(
@@ -811,6 +847,9 @@ class PdfInvoiceParser(BaseInvoiceParser):
             inv.total_amount = declared_total
         elif inv.lines:
             inv.total_amount = sum(l.amount for l in inv.lines)
+
+        # 保存票据级原始文本，供后续机票/航班等元信息解析
+        inv.raw_text = all_text
 
         return inv
 

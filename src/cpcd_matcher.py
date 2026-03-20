@@ -1,6 +1,9 @@
 """
-基于 NLP 的 CPCD 类别匹配：将 agent 输入文字与 cpcd_full_*.csv 中的产品名称进行语义匹配。
+基于 NLP 的 CPCD 类别匹配：将 agent 输入文字与 CPCD 产品表中的产品名称进行语义匹配。
 使用 jieba 分词 + TF-IDF + 余弦相似度。
+
+默认读取 data/cpcd_catalog.csv（由 tools/merge_core_into_datasets.py 自 core.csv 与
+Emission factors.csv 合并生成）；若不存在则读 data/Emission factors.csv。
 """
 from __future__ import annotations
 from dataclasses import dataclass
@@ -8,7 +11,9 @@ from pathlib import Path
 from typing import List, Optional
 
 _ROOT = Path(__file__).resolve().parents[1]
-_DEFAULT_CPCD_PATH = _ROOT / "Emission factors.csv"
+_DATA = _ROOT / "data"
+_CATALOG = _DATA / "cpcd_catalog.csv"
+_DEFAULT_CPCD_PATH = _CATALOG if _CATALOG.exists() else _DATA / "Emission factors.csv"
 
 
 @dataclass

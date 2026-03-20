@@ -1,0 +1,683 @@
+{
+  "_meta": {
+    "primary": "data/core.csv",
+    "note": "公路细分及水运等均在 road_modes；invoice-parser 逻辑未改"
+  },
+  "rail": {
+    "product_id": "65129X0032024C",
+    "mode_cn": "铁路运输",
+    "boundary": "大门到坟墓",
+    "g_co2e_per_tonne_km": 6.502,
+    "kg_co2e_per_tonne_km": 0.006502,
+    "year": 2024,
+    "source": "data/core.csv"
+  },
+  "air": {
+    "product_id": "65319X0012024C",
+    "mode_cn": "航空运输",
+    "boundary": "大门到坟墓",
+    "g_co2e_per_tonne_km": 921.0,
+    "kg_co2e_per_tonne_km": 0.921,
+    "year": 2024,
+    "source": "data/core.csv"
+  },
+  "road_default": {
+    "product_id": "65119X0442024C",
+    "mode_cn": "天然气货车运输-不区分质量区间",
+    "boundary": "摇篮到坟墓",
+    "g_co2e_per_tonne_km": 247.79999999999998,
+    "kg_co2e_per_tonne_km": 0.2478,
+    "year": 2024,
+    "source": "data/core.csv"
+  },
+  "road_modes": [
+    {
+      "product_id": "65125X0012018C",
+      "mode_cn": "铁路（综合货运）",
+      "boundary": "大门到大门",
+      "g_co2e_per_tonne_km": 8.0,
+      "kg_co2e_per_tonne_km": 0.008,
+      "year": 2018,
+      "source": "data/core.csv"
+    },
+    {
+      "product_id": "65119X0082019C",
+      "mode_cn": "中型汽油货车运输(载重8t)",
+      "boundary": "摇篮到坟墓",
+      "g_co2e_per_tonne_km": 115.0,
+      "kg_co2e_per_tonne_km": 0.115,
+      "year": 2019,
+      "source": "data/core.csv"
+    },
+    {
+      "product_id": "65129X0022019C",
+      "mode_cn": "铁路运输(中国市场平均)",
+      "boundary": "摇篮到坟墓",
+      "g_co2e_per_tonne_km": 10.0,
+      "kg_co2e_per_tonne_km": 0.01,
+      "year": 2019,
+      "source": "data/core.csv"
+    },
+    {
+      "product_id": "65119X0172019C",
+      "mode_cn": "电力机车运输",
+      "boundary": "摇篮到坟墓",
+      "g_co2e_per_tonne_km": 10.0,
+      "kg_co2e_per_tonne_km": 0.01,
+      "year": 2019,
+      "source": "data/core.csv"
+    },
+    {
+      "product_id": "65117X0122019C",
+      "mode_cn": "内燃机车运输",
+      "boundary": "摇篮到坟墓",
+      "g_co2e_per_tonne_km": 11.0,
+      "kg_co2e_per_tonne_km": 0.011,
+      "year": 2019,
+      "source": "data/core.csv"
+    },
+    {
+      "product_id": "65212X0012019C",
+      "mode_cn": "液货船运输(载重 2000t)",
+      "boundary": "摇篮到坟墓",
+      "g_co2e_per_tonne_km": 19.0,
+      "kg_co2e_per_tonne_km": 0.019,
+      "year": 2019,
+      "source": "data/core.csv"
+    },
+    {
+      "product_id": "65119X0102019C",
+      "mode_cn": "重型汽油货车运输(载重18t)",
+      "boundary": "摇篮到坟墓",
+      "g_co2e_per_tonne_km": 104.0,
+      "kg_co2e_per_tonne_km": 0.104,
+      "year": 2019,
+      "source": "data/core.csv"
+    },
+    {
+      "product_id": "65119X0092019C",
+      "mode_cn": "重型汽油货车运输(载重10t)",
+      "boundary": "摇篮到坟墓",
+      "g_co2e_per_tonne_km": 104.0,
+      "kg_co2e_per_tonne_km": 0.104,
+      "year": 2019,
+      "source": "data/core.csv"
+    },
+    {
+      "product_id": "65119X0162019C",
+      "mode_cn": "重型柴油货车运输(载重46t)",
+      "boundary": "摇篮到坟墓",
+      "g_co2e_per_tonne_km": 57.0,
+      "kg_co2e_per_tonne_km": 0.057,
+      "year": 2019,
+      "source": "data/core.csv"
+    },
+    {
+      "product_id": "65229X0012019C",
+      "mode_cn": "干散货船运输(载重 2500t)",
+      "boundary": "摇篮到坟墓",
+      "g_co2e_per_tonne_km": 15.0,
+      "kg_co2e_per_tonne_km": 0.015,
+      "year": 2019,
+      "source": "data/core.csv"
+    },
+    {
+      "product_id": "65119X0142019C",
+      "mode_cn": "重型柴油货车运输(载重 18t)",
+      "boundary": "摇篮到坟墓",
+      "g_co2e_per_tonne_km": 129.0,
+      "kg_co2e_per_tonne_km": 0.129,
+      "year": 2019,
+      "source": "data/core.csv"
+    },
+    {
+      "product_id": "65119X0152019C",
+      "mode_cn": "重型柴油货车运输(载重 30t)",
+      "boundary": "摇篮到坟墓",
+      "g_co2e_per_tonne_km": 78.0,
+      "kg_co2e_per_tonne_km": 0.078,
+      "year": 2019,
+      "source": "data/core.csv"
+    },
+    {
+      "product_id": "65119X0112019C",
+      "mode_cn": "轻型柴油货车运输 (载重 2t)",
+      "boundary": "摇篮到坟墓",
+      "g_co2e_per_tonne_km": 286.0,
+      "kg_co2e_per_tonne_km": 0.286,
+      "year": 2019,
+      "source": "data/core.csv"
+    },
+    {
+      "product_id": "65119X0122019C",
+      "mode_cn": "中型柴油货车运输(载重8t)",
+      "boundary": "摇篮到坟墓",
+      "g_co2e_per_tonne_km": 179.0,
+      "kg_co2e_per_tonne_km": 0.179,
+      "year": 2019,
+      "source": "data/core.csv"
+    },
+    {
+      "product_id": "65119X0072019C",
+      "mode_cn": "轻型汽油货车运输(载重 2t)",
+      "boundary": "摇篮到坟墓",
+      "g_co2e_per_tonne_km": 334.0,
+      "kg_co2e_per_tonne_km": 0.334,
+      "year": 2019,
+      "source": "data/core.csv"
+    },
+    {
+      "product_id": "65119X0132019C",
+      "mode_cn": "重型柴油货车运输(载重 10t)",
+      "boundary": "摇篮到坟墓",
+      "g_co2e_per_tonne_km": 162.0,
+      "kg_co2e_per_tonne_km": 0.162,
+      "year": 2019,
+      "source": "data/core.csv"
+    },
+    {
+      "product_id": "43560X0012022C",
+      "mode_cn": "曳引式电梯",
+      "boundary": "摇篮到坟墓",
+      "g_co2e_per_tonne_km": 27180.0,
+      "kg_co2e_per_tonne_km": 27.18,
+      "year": 2022,
+      "source": "data/core.csv"
+    },
+    {
+      "product_id": "49114X0012023C",
+      "mode_cn": "轻型冷藏车（柴油）",
+      "boundary": "摇篮到坟墓",
+      "g_co2e_per_tonne_km": 571.1,
+      "kg_co2e_per_tonne_km": 0.5711,
+      "year": 2023,
+      "source": "data/core.csv"
+    },
+    {
+      "product_id": "65119X0402024C",
+      "mode_cn": "纯电动货车运输-不区分质量区间",
+      "boundary": "摇篮到大门",
+      "g_co2e_per_tonne_km": 127.8,
+      "kg_co2e_per_tonne_km": 0.1278,
+      "year": 2024,
+      "source": "data/core.csv"
+    },
+    {
+      "product_id": "65119X0272024C",
+      "mode_cn": "柴油货车运输-不区分质量区间",
+      "boundary": "摇篮到坟墓",
+      "g_co2e_per_tonne_km": 215.7,
+      "kg_co2e_per_tonne_km": 0.2157,
+      "year": 2024,
+      "source": "data/core.csv"
+    },
+    {
+      "product_id": "65111X0052024C",
+      "mode_cn": "轻型冷链汽油货车运输",
+      "boundary": "摇篮到坟墓",
+      "g_co2e_per_tonne_km": 251.8,
+      "kg_co2e_per_tonne_km": 0.2518,
+      "year": 2024,
+      "source": "data/core.csv"
+    },
+    {
+      "product_id": "65111X0142024C",
+      "mode_cn": "微型冷链天然气货车运输",
+      "boundary": "摇篮到坟墓",
+      "g_co2e_per_tonne_km": 966.6,
+      "kg_co2e_per_tonne_km": 0.9666,
+      "year": 2024,
+      "source": "data/core.csv"
+    },
+    {
+      "product_id": "65111X0062024C",
+      "mode_cn": "微型冷链汽油货车运输",
+      "boundary": "摇篮到坟墓",
+      "g_co2e_per_tonne_km": 777.1,
+      "kg_co2e_per_tonne_km": 0.7771,
+      "year": 2024,
+      "source": "data/core.csv"
+    },
+    {
+      "product_id": "65111X0102024C",
+      "mode_cn": "微型冷链纯电动货车运输",
+      "boundary": "摇篮到大门",
+      "g_co2e_per_tonne_km": 250.0,
+      "kg_co2e_per_tonne_km": 0.25,
+      "year": 2024,
+      "source": "data/core.csv"
+    },
+    {
+      "product_id": "65119X0482024C",
+      "mode_cn": "微型天然气货车运输",
+      "boundary": "摇篮到坟墓",
+      "g_co2e_per_tonne_km": 840.5,
+      "kg_co2e_per_tonne_km": 0.8405,
+      "year": 2024,
+      "source": "data/core.csv"
+    },
+    {
+      "product_id": "65119X0392024C",
+      "mode_cn": "微型汽油货车运输",
+      "boundary": "摇篮到坟墓",
+      "g_co2e_per_tonne_km": 675.8,
+      "kg_co2e_per_tonne_km": 0.6758,
+      "year": 2024,
+      "source": "data/core.csv"
+    },
+    {
+      "product_id": "65119X0432024C",
+      "mode_cn": "微型纯电动货车运输",
+      "boundary": "摇篮到大门",
+      "g_co2e_per_tonne_km": 217.4,
+      "kg_co2e_per_tonne_km": 0.2174,
+      "year": 2024,
+      "source": "data/core.csv"
+    },
+    {
+      "product_id": "65119X0442024C",
+      "mode_cn": "天然气货车运输-不区分质量区间",
+      "boundary": "摇篮到坟墓",
+      "g_co2e_per_tonne_km": 247.79999999999998,
+      "kg_co2e_per_tonne_km": 0.2478,
+      "year": 2024,
+      "source": "data/core.csv"
+    },
+    {
+      "product_id": "65119X0412024C",
+      "mode_cn": "重型纯电动货车运输",
+      "boundary": "摇篮到大门",
+      "g_co2e_per_tonne_km": 107.30000000000001,
+      "kg_co2e_per_tonne_km": 0.1073,
+      "year": 2024,
+      "source": "data/core.csv"
+    },
+    {
+      "product_id": "65119X0292024C",
+      "mode_cn": "重型柴油货车运输 [25000kg,31000kg]",
+      "boundary": "摇篮到坟墓",
+      "g_co2e_per_tonne_km": 93.60000000000001,
+      "kg_co2e_per_tonne_km": 0.0936,
+      "year": 2024,
+      "source": "data/core.csv"
+    },
+    {
+      "product_id": "65119X0302024C",
+      "mode_cn": "重型柴油货车运输 [20000kg,25000kg]",
+      "boundary": "摇篮到坟墓",
+      "g_co2e_per_tonne_km": 97.19999999999999,
+      "kg_co2e_per_tonne_km": 0.0972,
+      "year": 2024,
+      "source": "data/core.csv"
+    },
+    {
+      "product_id": "65119X0312024C",
+      "mode_cn": "重型柴油货车运输 [16000kg,20000kg]",
+      "boundary": "摇篮到坟墓",
+      "g_co2e_per_tonne_km": 102.5,
+      "kg_co2e_per_tonne_km": 0.1025,
+      "year": 2024,
+      "source": "data/core.csv"
+    },
+    {
+      "product_id": "65119X0452024C",
+      "mode_cn": "重型天然气货车运输",
+      "boundary": "摇篮到坟墓",
+      "g_co2e_per_tonne_km": 108.8,
+      "kg_co2e_per_tonne_km": 0.1088,
+      "year": 2024,
+      "source": "data/core.csv"
+    },
+    {
+      "product_id": "65111X0072024C",
+      "mode_cn": "重型冷链纯电动货车运输",
+      "boundary": "摇篮到大门",
+      "g_co2e_per_tonne_km": 120.2,
+      "kg_co2e_per_tonne_km": 0.1202,
+      "year": 2024,
+      "source": "data/core.csv"
+    },
+    {
+      "product_id": "65111X0022024C",
+      "mode_cn": "重型冷链柴油货车运输",
+      "boundary": "摇篮到坟墓",
+      "g_co2e_per_tonne_km": 109.5,
+      "kg_co2e_per_tonne_km": 0.1095,
+      "year": 2024,
+      "source": "data/core.csv"
+    },
+    {
+      "product_id": "65111X0112024C",
+      "mode_cn": "重型冷链天然气货车运输",
+      "boundary": "摇篮到坟墓",
+      "g_co2e_per_tonne_km": 121.89999999999999,
+      "kg_co2e_per_tonne_km": 0.1219,
+      "year": 2024,
+      "source": "data/core.csv"
+    },
+    {
+      "product_id": "65119X0422024C",
+      "mode_cn": "轻型纯电动货车运输",
+      "boundary": "摇篮到大门",
+      "g_co2e_per_tonne_km": 136.1,
+      "kg_co2e_per_tonne_km": 0.1361,
+      "year": 2024,
+      "source": "data/core.csv"
+    },
+    {
+      "product_id": "65119X0382024C",
+      "mode_cn": "轻型汽油货车运输",
+      "boundary": "摇篮到坟墓",
+      "g_co2e_per_tonne_km": 224.8,
+      "kg_co2e_per_tonne_km": 0.2248,
+      "year": 2024,
+      "source": "data/core.csv"
+    },
+    {
+      "product_id": "65119X0362024C",
+      "mode_cn": "轻型柴油货车运输",
+      "boundary": "摇篮到坟墓",
+      "g_co2e_per_tonne_km": 261.1,
+      "kg_co2e_per_tonne_km": 0.2611,
+      "year": 2024,
+      "source": "data/core.csv"
+    },
+    {
+      "product_id": "65119X0472024C",
+      "mode_cn": "轻型天然气货车运输",
+      "boundary": "摇篮到坟墓",
+      "g_co2e_per_tonne_km": 301.3,
+      "kg_co2e_per_tonne_km": 0.3013,
+      "year": 2024,
+      "source": "data/core.csv"
+    },
+    {
+      "product_id": "65111X0092024C",
+      "mode_cn": "轻型冷链纯电动货车运输",
+      "boundary": "摇篮到大门",
+      "g_co2e_per_tonne_km": 152.4,
+      "kg_co2e_per_tonne_km": 0.1524,
+      "year": 2024,
+      "source": "data/core.csv"
+    },
+    {
+      "product_id": "65111X0042024C",
+      "mode_cn": "轻型冷链柴油货车运输",
+      "boundary": "摇篮到坟墓",
+      "g_co2e_per_tonne_km": 292.5,
+      "kg_co2e_per_tonne_km": 0.2925,
+      "year": 2024,
+      "source": "data/core.csv"
+    },
+    {
+      "product_id": "65111X0132024C",
+      "mode_cn": "轻型冷链天然气货车运输",
+      "boundary": "摇篮到坟墓",
+      "g_co2e_per_tonne_km": 337.4,
+      "kg_co2e_per_tonne_km": 0.3374,
+      "year": 2024,
+      "source": "data/core.csv"
+    },
+    {
+      "product_id": "65119X0282024C",
+      "mode_cn": "重型柴油货车运输",
+      "boundary": "摇篮到坟墓",
+      "g_co2e_per_tonne_km": 97.8,
+      "kg_co2e_per_tonne_km": 0.0978,
+      "year": 2024,
+      "source": "data/core.csv"
+    },
+    {
+      "product_id": "65139X0012024C",
+      "mode_cn": "中型纯电动货车运输",
+      "boundary": "摇篮到大门",
+      "g_co2e_per_tonne_km": 103.6,
+      "kg_co2e_per_tonne_km": 0.1036,
+      "year": 2024,
+      "source": "data/core.csv"
+    },
+    {
+      "product_id": "65219X0932024C",
+      "mode_cn": "沿海和远洋航运-均值",
+      "boundary": "大门到坟墓",
+      "g_co2e_per_tonne_km": 6.088,
+      "kg_co2e_per_tonne_km": 0.006088,
+      "year": 2024,
+      "source": "data/core.csv"
+    },
+    {
+      "product_id": "65219X0892024C",
+      "mode_cn": "沿海和远洋航运-其他液货船",
+      "boundary": "大门到坟墓",
+      "g_co2e_per_tonne_km": 28.775,
+      "kg_co2e_per_tonne_km": 0.028775,
+      "year": 2024,
+      "source": "data/core.csv"
+    },
+    {
+      "product_id": "65219X0912024C",
+      "mode_cn": "沿海和远洋航运-其他普通货船",
+      "boundary": "大门到坟墓",
+      "g_co2e_per_tonne_km": 11.719,
+      "kg_co2e_per_tonne_km": 0.011719,
+      "year": 2024,
+      "source": "data/core.csv"
+    },
+    {
+      "product_id": "65119X0342024C",
+      "mode_cn": "中型柴油货车运输 [8500kg,10500kg]",
+      "boundary": "摇篮到坟墓",
+      "g_co2e_per_tonne_km": 156.9,
+      "kg_co2e_per_tonne_km": 0.1569,
+      "year": 2024,
+      "source": "data/core.csv"
+    },
+    {
+      "product_id": "65119X0352024C",
+      "mode_cn": "中型柴油货车运输 [7000kg,8500kg]",
+      "boundary": "摇篮到坟墓",
+      "g_co2e_per_tonne_km": 149.29999999999998,
+      "kg_co2e_per_tonne_km": 0.1493,
+      "year": 2024,
+      "source": "data/core.csv"
+    },
+    {
+      "product_id": "65119X0332024C",
+      "mode_cn": "中型柴油货车运输 [10500kg,12500kg]",
+      "boundary": "摇篮到坟墓",
+      "g_co2e_per_tonne_km": 144.5,
+      "kg_co2e_per_tonne_km": 0.1445,
+      "year": 2024,
+      "source": "data/core.csv"
+    },
+    {
+      "product_id": "65119X0322024C",
+      "mode_cn": "中型柴油货车运输",
+      "boundary": "摇篮到坟墓",
+      "g_co2e_per_tonne_km": 150.2,
+      "kg_co2e_per_tonne_km": 0.1502,
+      "year": 2024,
+      "source": "data/core.csv"
+    },
+    {
+      "product_id": "65119X0372024C",
+      "mode_cn": "汽油货车运输-不区分质量区间",
+      "boundary": "摇篮到坟墓",
+      "g_co2e_per_tonne_km": 225.20000000000002,
+      "kg_co2e_per_tonne_km": 0.2252,
+      "year": 2024,
+      "source": "data/core.csv"
+    },
+    {
+      "product_id": "65119X0462024C",
+      "mode_cn": "中型天然气货车运输",
+      "boundary": "摇篮到坟墓",
+      "g_co2e_per_tonne_km": 163.0,
+      "kg_co2e_per_tonne_km": 0.163,
+      "year": 2024,
+      "source": "data/core.csv"
+    },
+    {
+      "product_id": "65111X0082024C",
+      "mode_cn": "中型冷链纯电动货车运输",
+      "boundary": "摇篮到大门",
+      "g_co2e_per_tonne_km": 116.0,
+      "kg_co2e_per_tonne_km": 0.116,
+      "year": 2024,
+      "source": "data/core.csv"
+    },
+    {
+      "product_id": "65111X0032024C",
+      "mode_cn": "中型冷链柴油货车运输",
+      "boundary": "摇篮到坟墓",
+      "g_co2e_per_tonne_km": 168.3,
+      "kg_co2e_per_tonne_km": 0.1683,
+      "year": 2024,
+      "source": "data/core.csv"
+    },
+    {
+      "product_id": "65111X0122024C",
+      "mode_cn": "中型冷链天然气货车运输",
+      "boundary": "摇篮到坟墓",
+      "g_co2e_per_tonne_km": 182.60000000000002,
+      "kg_co2e_per_tonne_km": 0.1826,
+      "year": 2024,
+      "source": "data/core.csv"
+    },
+    {
+      "product_id": "65229X0082024C",
+      "mode_cn": "内河水运-拖船",
+      "boundary": "大门到坟墓",
+      "g_co2e_per_tonne_km": 6.402,
+      "kg_co2e_per_tonne_km": 0.006402,
+      "year": 2024,
+      "source": "data/core.csv"
+    },
+    {
+      "product_id": "65213X0062024C",
+      "mode_cn": "沿海和远洋航运-集装箱船",
+      "boundary": "大门到坟墓",
+      "g_co2e_per_tonne_km": 8.122,
+      "kg_co2e_per_tonne_km": 0.008122,
+      "year": 2024,
+      "source": "data/core.csv"
+    },
+    {
+      "product_id": "65222X0012024C",
+      "mode_cn": "内河水运-油船",
+      "boundary": "大门到坟墓",
+      "g_co2e_per_tonne_km": 14.938,
+      "kg_co2e_per_tonne_km": 0.014938,
+      "year": 2024,
+      "source": "data/core.csv"
+    },
+    {
+      "product_id": "65229X0062024C",
+      "mode_cn": "内河水运-集装箱船",
+      "boundary": "大门到坟墓",
+      "g_co2e_per_tonne_km": 4.505,
+      "kg_co2e_per_tonne_km": 0.004505,
+      "year": 2024,
+      "source": "data/core.csv"
+    },
+    {
+      "product_id": "65219X0922024C",
+      "mode_cn": "沿海和远洋航运-多用途船",
+      "boundary": "大门到坟墓",
+      "g_co2e_per_tonne_km": 9.746,
+      "kg_co2e_per_tonne_km": 0.009746000000000001,
+      "year": 2024,
+      "source": "data/core.csv"
+    },
+    {
+      "product_id": "65219X0862024C",
+      "mode_cn": "沿海和远洋航运-干散货船",
+      "boundary": "大门到坟墓",
+      "g_co2e_per_tonne_km": 5.337,
+      "kg_co2e_per_tonne_km": 0.005337,
+      "year": 2024,
+      "source": "data/core.csv"
+    },
+    {
+      "product_id": "65219X0902024C",
+      "mode_cn": "沿海和远洋航运-杂货船",
+      "boundary": "大门到坟墓",
+      "g_co2e_per_tonne_km": 15.548,
+      "kg_co2e_per_tonne_km": 0.015548,
+      "year": 2024,
+      "source": "data/core.csv"
+    },
+    {
+      "product_id": "65229X0072024C",
+      "mode_cn": "内河水运-滚轮船",
+      "boundary": "大门到坟墓",
+      "g_co2e_per_tonne_km": 2.608,
+      "kg_co2e_per_tonne_km": 0.002608,
+      "year": 2024,
+      "source": "data/core.csv"
+    },
+    {
+      "product_id": "65219X0872024C",
+      "mode_cn": "沿海和远洋航运-油船",
+      "boundary": "大门到坟墓",
+      "g_co2e_per_tonne_km": 4.293,
+      "kg_co2e_per_tonne_km": 0.004293,
+      "year": 2024,
+      "source": "data/core.csv"
+    },
+    {
+      "product_id": "65219X0882024C",
+      "mode_cn": "沿海和远洋航运-液化气船",
+      "boundary": "大门到坟墓",
+      "g_co2e_per_tonne_km": 49.505,
+      "kg_co2e_per_tonne_km": 0.049505,
+      "year": 2024,
+      "source": "data/core.csv"
+    },
+    {
+      "product_id": "65229X0052024C",
+      "mode_cn": "内河水运-干散货船",
+      "boundary": "大门到坟墓",
+      "g_co2e_per_tonne_km": 2.134,
+      "kg_co2e_per_tonne_km": 0.002134,
+      "year": 2024,
+      "source": "data/core.csv"
+    },
+    {
+      "product_id": "65125X0022025C",
+      "mode_cn": "运输过程-铁路",
+      "boundary": "大门到坟墓",
+      "g_co2e_per_tonne_km": 3.0,
+      "kg_co2e_per_tonne_km": 0.003,
+      "year": 2025,
+      "source": "data/core.csv"
+    },
+    {
+      "product_id": "65319X0022025C",
+      "mode_cn": "运输过程-航空",
+      "boundary": "大门到坟墓",
+      "g_co2e_per_tonne_km": 1404.0,
+      "kg_co2e_per_tonne_km": 1.404,
+      "year": 2025,
+      "source": "data/core.csv"
+    },
+    {
+      "product_id": "65229X0092025C",
+      "mode_cn": "运输过程-水路",
+      "boundary": "大门到坟墓",
+      "g_co2e_per_tonne_km": 20.0,
+      "kg_co2e_per_tonne_km": 0.02,
+      "year": 2025,
+      "source": "data/core.csv"
+    },
+    {
+      "product_id": "65117X0102025C",
+      "mode_cn": "运输过程-公路",
+      "boundary": "大门到坟墓",
+      "g_co2e_per_tonne_km": 76.0,
+      "kg_co2e_per_tonne_km": 0.076,
+      "year": 2025,
+      "source": "data/core.csv"
+    }
+  ]
+}

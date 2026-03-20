@@ -17,6 +17,7 @@
       <button type="button" class="active" data-tab="query">产品查询</button>
       <button type="button" data-tab="invoice">发票分析</button>
       <button type="button" data-tab="manage">数据管理</button>
+      <button type="button" data-tab="distance">机场距离</button>
       <button type="button" data-tab="stats">统计报表</button>
     </div>
 
@@ -125,6 +126,27 @@
           <button class="secondary" id="btnExportProducts">导出 CSV</button>
         </div>
         <div class="product-list" id="productList">加载中...</div>
+      </div>
+    </div>
+
+    <!-- ───────────────────────────────────────────────── -->
+    <!-- 面板5：机场距离计算 -->
+    <!-- ───────────────────────────────────────────────── -->
+    <div class="panel" id="panel-distance">
+      <div class="card">
+        <h3 style="margin-top:0;font-size:1.05rem;">机场通勤距离（大圆定律）</h3>
+        <p style="color:var(--muted);font-size:0.9rem;margin-top:0.25rem;">
+          支持输入中文机场名或 IATA 三字码（如 PEK、PVG）。
+        </p>
+        <div class="form-row" style="margin-top:1rem;">
+          <input type="text" id="fromAirportInput" placeholder="起点机场，如：北京首都机场" style="flex:1;">
+          <input type="text" id="toAirportInput" placeholder="终点机场，如：上海浦东机场" style="flex:1;margin-left:0.5rem;">
+        </div>
+        <div class="form-row" style="margin-top:0.75rem;">
+          <button id="btnComputeDistance">计算距离</button>
+          <button class="secondary" id="btnClearDistance" style="margin-left:0.5rem;">清空</button>
+        </div>
+        <div id="distanceResult" class="result" style="margin-top:1rem;"></div>
       </div>
     </div>
 

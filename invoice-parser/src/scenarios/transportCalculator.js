@@ -1,29 +1,28 @@
 /**
- * 通勤与交通专用核算：燃油、公共交通、出租车/网约车
- *
- * 因子为模拟值，生产环境建议使用国家/行业发布因子或企业实测数据。
+ * 通勤与交通：燃油按 CPCD 汽油/柴油「摇篮到大门」kgCO2e/公吨 × 升→吨；
+ * 公交/出租按支出金额用 core 差旅「tCO2e/万元人民币」换算为 kgCO2e/元（见 data/cpcd_scene_factors.json）。
  */
 
-/** 汽油因子 kgCO2e/升 */
-const FUEL_FACTOR_GASOLINE = 2.98;
-/** 柴油因子 kgCO2e/升 */
-const FUEL_FACTOR_DIESEL = 3.16;
-/** 公共交通 EEIO 因子 kgCO2e/元（模拟） */
-const PUBLIC_TRANSPORT_FACTOR = 0.12;
-/** 出租车/网约车 EEIO 因子 kgCO2e/元（模拟） */
-const TAXI_FACTOR = 0.35;
+const { getFactors } = require('./cpcdSceneFactors');
+
+function _gasolineFactorPerLiter() {
+  const g = getFactors().gasolineL;
+  return (g.kg_co2e_per_tonne * g.assumed_liquid_kg_per_liter) / 1000;
+}
+
+function _dieselFactorPerLiter() {
+  const d = getFactors().dieselL;
+  return (d.kg_co2e_per_tonne * d.assumed_liquid_kg_per_liter) / 1000;
+}
 
 /**
- * 燃油排放计算
- * @param {number} quantity - 升数
- * @param {string} fuelType - "汽油" | "柴油"
- * @returns {{ emissionsKg: number, quantity: number, factor: number, fuelType: string }}
+ * 燃油排放计算（CPCD 摇篮到大门 + 升密度）
  */
 function fuelCalculator(quantity, fuelType) {
   const q = Number(quantity);
   const validQ = !Number.isNaN(q) && q >= 0 ? q : 0;
   const type = (fuelType || '').trim();
-  const factor = /柴油/i.test(type) ? FUEL_FACTOR_DIESEL : FUEL_FACTOR_GASOLINE;
+  const factor = /柴油/i.test(type) ? _dieselFactorPerLiter() : _gasolineFactorPerLiter();
   const fuelName = /柴油/i.test(type) ? '柴油' : '汽油';
   return {
     emissionsKg: Math.round(validQ * factor * 100) / 100,
@@ -34,41 +33,37 @@ function fuelCalculator(quantity, fuelType) {
 }
 
 /**
- * 公共交通排放计算（公交卡/地铁充值等）
- * @param {number} amount - 金额（元）
- * @param {string} [city] - 城市（预留，当前因子未按城市区分）
- * @returns {{ emissionsKg: number, amount: number, factor: number }}
+ * 公共交通（公交卡/地铁充值等）：核心库无单独万元因子 → 采用「国内高铁差旅-基于支出金额核算」同口径。
  */
 function publicTransportCalculator(amount, city) {
   const a = Number(amount);
   const validA = !Number.isNaN(a) && a >= 0 ? a : 0;
+  const factor = getFactors().publicTransitKgPerCny;
   return {
-    emissionsKg: Math.round(validA * PUBLIC_TRANSPORT_FACTOR * 100) / 100,
+    emissionsKg: Math.round(validA * factor * 100) / 100,
     amount: validA,
-    factor: PUBLIC_TRANSPORT_FACTOR,
+    factor,
   };
 }
 
 /**
- * 出租车/网约车排放计算
- * @param {number} amount - 金额（元）
- * @returns {{ emissionsKg: number, amount: number, factor: number }}
+ * 出租/网约车：默认「国内出租/网约车差旅-基于支出金额核算」；发票含 燃油/油车 时用燃油车条目，含 电动/电车 用电车条目。
  */
-function taxiCalculator(amount) {
+function taxiCalculator(amount, invoiceHint = '') {
   const a = Number(amount);
   const validA = !Number.isNaN(a) && a >= 0 ? a : 0;
+  const F = getFactors();
+  const h = (invoiceHint || '').toString();
+  let factor = F.taxiKgPerCny;
+  if (/电动|电车|新能源/i.test(h)) factor = F.taxiEvKgPerCny;
+  else if (/燃油|汽油|柴油|油车/i.test(h)) factor = F.taxiFuelKgPerCny;
   return {
-    emissionsKg: Math.round(validA * TAXI_FACTOR * 100) / 100,
+    emissionsKg: Math.round(validA * factor * 100) / 100,
     amount: validA,
-    factor: TAXI_FACTOR,
+    factor,
   };
 }
 
-/**
- * 从发票推断交通类型并提取金额/数量
- * @param {Object} invoice
- * @returns {{ type: 'fuel'|'public'|'taxi'|null, quantity?: number, fuelType?: string, amount?: number }}
- */
 function extractTransportData(invoice) {
   const items = Array.isArray(invoice?.items) ? invoice.items : [];
   const totalAmount = invoice?.totalAmount != null ? Number(invoice.totalAmount) : NaN;
@@ -93,10 +88,15 @@ function extractTransportData(invoice) {
   }
   if (/出租车|网约车|滴滴|快车|专车|打车/i.test(combined)) {
     const amount = !Number.isNaN(totalAmount) && totalAmount > 0 ? totalAmount : (items[0]?.amount != null ? Number(items[0].amount) : NaN);
-    if (!Number.isNaN(amount) && amount > 0) return { type: 'taxi', amount };
+    if (!Number.isNaN(amount) && amount > 0) return { type: 'taxi', amount, hint: combined };
   }
   return { type: null };
 }
+
+const FUEL_FACTOR_GASOLINE = _gasolineFactorPerLiter();
+const FUEL_FACTOR_DIESEL = _dieselFactorPerLiter();
+const PUBLIC_TRANSPORT_FACTOR = getFactors().publicTransitKgPerCny;
+const TAXI_FACTOR = getFactors().taxiKgPerCny;
 
 module.exports = {
   fuelCalculator,

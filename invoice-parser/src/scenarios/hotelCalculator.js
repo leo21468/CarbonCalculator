@@ -1,13 +1,13 @@
 /**
- * 差旅住宿智能核算：根据住宿发票反推间夜数并计算碳排放
+ * 差旅住宿核算（国内）
  *
- * 数据来源说明：
- * - 城市差旅标准：参考财政部《中央和国家机关差旅费管理办法》及各省差旅住宿费标准（见 cityRates.js）
- * - 酒店排放因子：参考 CHSB（中国酒店可持续基准）等研究的住宿碳足迹，单位 kgCO2e/间夜（见 hotelFactors.js）
+ * - **优先**：发票金额 × `data/core.csv` 快照「国内住宿差旅-基于支出金额核算」（2.036 tCO2e/万元 → kgCO2e/元），见 `cpcd_scene_factors.json`。
+ * - **兜底**：无金额时，间夜数 ×「国内住宿差旅-基于消费数量核算」66.52 kgCO2e/晚。
+ * - `estimateNights`（城市标准价反推间夜）仍可用于展示参考，不再用于默认排放计算（有金额时一律按支出）。
  */
 
 const { getCityRate } = require('./cityRates');
-const { getHotelFactor } = require('./hotelFactors');
+const { getFactors } = require('./cpcdSceneFactors');
 
 /** 城市关键词：销方名称/地址中出现的片段 → 标准城市名 */
 const CITY_KEYWORDS = [
@@ -104,13 +104,13 @@ function estimateNights(amount, city) {
 }
 
 /**
- * 计算住宿排放
- * 若有明确间夜数则直接使用，否则按金额反推间夜数；排放量 = 间夜数 × 城市酒店因子
+ * 计算住宿排放（国内，core 口径）
+ * 有金额时优先按支出；否则使用明确间夜 × 66.52；再无则尝试用城市标准价从金额反推间夜（仅当金额>0 且无显式间夜时，仍按支出核算，不再用城市因子×晚数）。
  * @param {number} amount - 发票金额（元）
  * @param {string} [city] - 城市（可先通过 extractCity(invoice) 获取）
  * @param {number|null} [explicitNights] - 明确间夜数（可先通过 extractExplicitNights(invoice) 获取）
- * @param {Object} [invoice] - 可选，若传则自动 extractCity / extractExplicitNights
- * @returns {{ emissionsKg: number, nights: number, factor: number, city: string|null, method: string, priceUsed?: number } | { error: string }}
+ * @param {Object} [invoice] - 可选，若传则自动 extractCity / extractExplicitNights / 补全金额
+ * @returns {{ emissionsKg: number, nights: number|null, factor: number, city: string|null, method: string, priceUsed?: number, nightsIndicated?: number } | { error: string }}
  */
 function calculateHotelEmission(amount, city, explicitNights, invoice) {
   let resolvedCity = (city || '').trim() || null;
@@ -119,39 +119,51 @@ function calculateHotelEmission(amount, city, explicitNights, invoice) {
   if (invoice) {
     if (!resolvedCity) resolvedCity = extractCity(invoice);
     if (resolvedNights == null || Number.isNaN(resolvedNights)) resolvedNights = extractExplicitNights(invoice);
+    if ((amount == null || amount === '') && (invoice.totalAmount != null || invoice.amount != null)) {
+      amount = invoice.totalAmount ?? invoice.amount;
+    }
   }
 
-  const amt = amount != null ? Number(amount) : NaN;
-  if (Number.isNaN(amt) || amt < 0) {
+  let amt = amount != null && amount !== '' ? Number(amount) : NaN;
+  if (Number.isNaN(amt)) amt = 0;
+  if (amt < 0) {
     return { error: '无效金额' };
   }
 
-  if (resolvedNights != null && !Number.isNaN(resolvedNights) && resolvedNights > 0) {
-    const nights = Math.floor(resolvedNights);
-    const factor = getHotelFactor(resolvedCity);
-    const emissionsKg = nights * factor;
+  const { hotelDomesticKgPerCny, hotelDomesticKgPerNight } = getFactors();
+  const spendKgPerCny = hotelDomesticKgPerCny;
+  const kgPerNight = hotelDomesticKgPerNight;
+
+  const nightsIndicated =
+    resolvedNights != null && !Number.isNaN(resolvedNights) && resolvedNights > 0
+      ? Math.floor(resolvedNights)
+      : null;
+
+  // 国内住宿：有金额则一律按 core「基于支出金额」，与是否标注间夜无关
+  if (amt > 0) {
+    const emissionsKg = amt * spendKgPerCny;
     return {
       emissionsKg: Math.round(emissionsKg * 100) / 100,
-      nights,
-      factor,
+      nights: null,
+      factor: spendKgPerCny,
       city: resolvedCity,
-      method: 'explicit',
+      method: 'domestic_spend',
+      nightsIndicated: nightsIndicated || undefined,
     };
   }
 
-  const estimated = estimateNights(amt, resolvedCity || '北京');
-  if (estimated.error) return { error: estimated.error };
-  const { nights, priceUsed } = estimated;
-  const factor = getHotelFactor(resolvedCity || '北京');
-  const emissionsKg = nights * factor;
-  return {
-    emissionsKg: Math.round(emissionsKg * 100) / 100,
-    nights,
-    factor,
-    city: resolvedCity,
-    method: 'estimated',
-    priceUsed,
-  };
+  if (nightsIndicated != null) {
+    const emissionsKg = nightsIndicated * kgPerNight;
+    return {
+      emissionsKg: Math.round(emissionsKg * 100) / 100,
+      nights: nightsIndicated,
+      factor: kgPerNight,
+      city: resolvedCity,
+      method: 'domestic_nights',
+    };
+  }
+
+  return { error: '请提供住宿发票金额（优先按支出核算）或间夜数' };
 }
 
 module.exports = {

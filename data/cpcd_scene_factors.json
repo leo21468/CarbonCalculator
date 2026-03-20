@@ -1,0 +1,77 @@
+{
+  "_comment": "invoice-parser 场景核算用因子，数值与 data/core.csv 快照一致。tCO2e/万元人民币 → kgCO2e/元 换算系数为 0.1（1 t = 1000 kg，1 万元 = 10000 元）。",
+  "tco2e_per_10k_cny_to_kg_per_cny": 0.1,
+  "domestic_air_travel_spend": {
+    "product_id": "64250X0022024C",
+    "product_name": "国内航空差旅-基于支出金额核算",
+    "t_co2e_per_10k_cny": 1.497
+  },
+  "domestic_rail_hsr_travel_spend": {
+    "product_id": "64210X0232024C",
+    "product_name": "国内高铁差旅-基于支出金额核算",
+    "t_co2e_per_10k_cny": 0.443
+  },
+  "domestic_taxi_rideshare_spend": {
+    "product_id": "64115X0062024C",
+    "product_name": "国内出租/网约车差旅-基于支出金额核算",
+    "t_co2e_per_10k_cny": 0.5047
+  },
+  "domestic_taxi_fuel_spend": {
+    "product_id": "64115X0082024C",
+    "product_name": "国内出租/网约车差旅-燃油车-基于支出金额核算",
+    "t_co2e_per_10k_cny": 0.8334
+  },
+  "domestic_taxi_ev_spend": {
+    "product_id": "64115X0102024C",
+    "product_name": "国内出租/网约车差旅-电车-基于支出金额核算",
+    "t_co2e_per_10k_cny": 0.4556
+  },
+  "public_transit_spend_proxy": {
+    "product_id": "64210X0232024C",
+    "product_name": "国内高铁差旅-基于支出金额核算",
+    "t_co2e_per_10k_cny": 0.443,
+    "note": "核心库无「公交卡/地铁充值」单独万元因子，采用与高铁差旅相同的基于支出金额核算因子。"
+  },
+  "logistics_road_spend_proxy": {
+    "product_id": "64115X0062024C",
+    "product_name": "国内出租/网约车差旅-基于支出金额核算",
+    "t_co2e_per_10k_cny": 0.5047,
+    "note": "公路货运仅运费（元）无专用产品时，采用出租/网约车差旅基于支出金额核算因子（同为道路出行支出口径）。"
+  },
+  "municipal_infrastructure_spend_proxy": {
+    "product_id": "53290X0062023C",
+    "product_name": "市政基础设施",
+    "kg_co2e_per_10k_cny": 419,
+    "note": "垃圾清运等环卫支出无单独「元」因子，采用市政基础设施 kgCO2e/万元人民币 近似。"
+  },
+  "gasoline_liter": {
+    "product_id": "12010X0062024C",
+    "product_name": "汽油,摇篮到大门",
+    "kg_co2e_per_tonne": 633.96,
+    "assumed_liquid_kg_per_liter": 0.75,
+    "note": "升→吨按 0.75 kg/L（非 core），排放因子取 core 摇篮到大门 kgCO2e/公吨。"
+  },
+  "diesel_liter": {
+    "product_id": "12010X0072024C",
+    "product_name": "柴油,摇篮到大门",
+    "kg_co2e_per_tonne": 650.86,
+    "assumed_liquid_kg_per_liter": 0.84,
+    "note": "升→吨按 0.84 kg/L（非 core）。"
+  },
+  "domestic_accommodation_spend": {
+    "product_id": "63290X0022024C",
+    "product_name": "国内住宿差旅-基于支出金额核算",
+    "t_co2e_per_10k_cny": 2.036
+  },
+  "domestic_accommodation_night": {
+    "product_id": "63290X0012024C",
+    "product_name": "国内住宿差旅-基于消费数量核算",
+    "kg_co2e_per_night": 66.52,
+    "note": "无金额、仅有间夜数时使用。"
+  },
+  "office_water_m3": {
+    "product_id": null,
+    "kg_co2e_per_m3": 0.168,
+    "note": "core 快照无办公自来水 m³ 因子；暂保留原场景常数，与 CPCD 产品库无关。"
+  }
+}

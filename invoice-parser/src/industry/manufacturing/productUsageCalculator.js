@@ -96,7 +96,7 @@ function calculateProductUsage(productType, quantity, region = '全国', adapter
   }
 
   const electricityFactor = getFactorByCategory(FACTOR_CATEGORY.ELECTRICITY, reg);
-  const factorValue = electricityFactor && typeof electricityFactor.value === 'number' ? electricityFactor.value : 0.5839;
+  const factorValue = electricityFactor && typeof electricityFactor.value === 'number' ? electricityFactor.value : 0.5777;
 
   result.lifetimeYears = params.lifetimeYears;
   result.annualKWh = params.annualKWh;

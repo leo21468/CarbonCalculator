@@ -15,6 +15,7 @@ opencv-python-headless>=4.8.0  # PP-Structure 图像输入
 numpy>=1.24.0
 pandas>=2.0.0
 openpyxl>=3.0.0
+pypinyin>=0.55.0
 
 # NLP 匹配 CPCD 类别（jieba + TF-IDF）
 jieba>=0.42.1
@@ -31,6 +32,9 @@ python-multipart>=0.0.5  # 文件上传
 
 # 测试
 pytest>=7.0.0
+
+# 测试：生成 PDF 发票用（tests/test_api.py 依赖）
+reportlab>=4.4.10
 
 # 碳价抓取（可选）
 # requests>=2.31.0

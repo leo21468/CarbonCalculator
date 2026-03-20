@@ -1,0 +1,103 @@
+{
+  "_comment": "由 tools/merge_core_into_datasets.py 自 data/core.csv 生成；与 2023/2024 PDF 口径对齐项以核心库为准，并保留 PDF 可追溯字段于 supplemental_pdf。",
+  "national_average": {
+    "year": 2024,
+    "kg_co2e_per_kwh": 0.5777,
+    "source": "data/core.csv (CPCD 核心数据库)",
+    "source_pdf": "data/core.csv",
+    "source_table": "CPCD 核心数据库",
+    "source_product_id": "17100H3732024C"
+  },
+  "regional_grids": {
+    "_year": 2023,
+    "_source": "data/core.csv (区域电网)",
+    "_source_pdf": "data/core.csv",
+    "_source_table": "2023 区域电力平均二氧化碳排放因子",
+    "西南": 0.2472,
+    "西北": 0.5543,
+    "东北": 0.5122,
+    "华东": 0.55,
+    "南方": 0.4042,
+    "华北": 0.6361,
+    "华中": 0.5271
+  },
+  "provinces": {
+    "_year": 2023,
+    "_source": "data/core.csv（库中字段名为区域因子，对应各省 2023 电力二氧化碳排放因子）",
+    "_source_pdf": "data/core.csv",
+    "_source_table": "2023 区域电力平均二氧化碳排放因子-分省",
+    "黑龙江": 0.5229,
+    "青海": 0.1796,
+    "陕西": 0.6335,
+    "重庆": 0.5581,
+    "辽宁": 0.4878,
+    "贵州": 0.5683,
+    "福建": 0.4211,
+    "甘肃": 0.4471,
+    "湖南": 0.4976,
+    "湖北": 0.4044,
+    "海南": 0.3648,
+    "浙江": 0.4974,
+    "河北": 0.6516,
+    "上海": 0.5737,
+    "云南": 0.1333,
+    "河南": 0.5897,
+    "内蒙古": 0.6479,
+    "江西": 0.5836,
+    "江苏": 0.5827,
+    "新疆": 0.6021,
+    "广西": 0.4476,
+    "广东": 0.4419,
+    "山西": 0.6634,
+    "山东": 0.6191,
+    "安徽": 0.6553,
+    "宁夏": 0.6187,
+    "天津": 0.6796,
+    "四川": 0.1564,
+    "吉林": 0.4671,
+    "北京": 0.5554
+  },
+  "national_excluding_market_renewables_2023": {
+    "kg_co2e_per_kwh": 0.6096,
+    "source": "data/core.csv",
+    "source_product_id": "17100H4232023C"
+  },
+  "national_fossil_only_2023": {
+    "kg_co2e_per_kwh": 0.8273,
+    "source": "data/core.csv",
+    "source_product_id": "17100H4242023C"
+  },
+  "national_reference_2023": {
+    "kg_co2e_per_kwh": 0.5306,
+    "note": "2023 年全国表1口径（二氧化碳排放因子），与 2024 碳足迹全国平均不同",
+    "source": "data/core.csv",
+    "source_product_id": "17100H3852023C"
+  },
+  "generation_types_2024": {
+    "_source": "data/core.csv",
+    "燃煤发电": 0.924,
+    "光伏发电": 0.052,
+    "光热发电": 0.0312,
+    "核能发电": 0.0065,
+    "水力发电": 0.0141,
+    "燃气发电": 0.4503,
+    "生物质发电": 0.0404,
+    "风力发电": 0.0324
+  },
+  "transmission_2024": {
+    "_source": "data/core.csv",
+    "不含线损": 0.0046,
+    "含线损": 0.0327
+  },
+  "transmission_2023": {
+    "_source": "data/core.csv",
+    "输配电（不含线损）": 0.0036
+  },
+  "supplemental_pdf": {
+    "note": "原始 PDF 路径 data/2023.pdf、data/2024.pdf 仍可作为审计对照；当以 core.csv 为主数据源时数值应与核心库一致。",
+    "pdfs": [
+      "data/2023.pdf",
+      "data/2024.pdf"
+    ]
+  }
+}

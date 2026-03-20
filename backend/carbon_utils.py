@@ -8,7 +8,7 @@ from typing import Tuple
 def parse_carbon_footprint(text: str) -> Tuple[float, str]:
     """
     解析碳足迹字符串，支持多种格式：
-      - "7.4tCO2e / 公吨"、"0.5839kgCO2e/kWh"（标准格式）
+      - "7.4tCO2e / 公吨"、"0.5777kgCO2e/kWh"（标准格式）
       - "1.2 kg CO2e/件"（单位前有空格）
       - "3.5CO2e/t"（无 kg/g/t 前缀，直接 CO2e）
       - "33.53gCO2e/千瓦时"（克级）

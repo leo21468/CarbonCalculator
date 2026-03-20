@@ -1,32 +1,25 @@
 /**
- * 废弃物处理专用核算
- *
- * 使用废弃物处理 EEIO 因子（模拟），生产环境建议使用地方或行业发布因子。
+ * 废弃物处理：按发票金额 × CPCD 近似因子（核心库无环卫「元」专用行时，
+ * 采用「市政基础设施」kgCO2e/万元人民币 → kgCO2e/元，见 cpcd_scene_factors.json）。
  */
 
-/** 废弃物处理 EEIO 因子 kgCO2e/元（模拟） */
-const WASTE_FACTOR = 0.45;
+const { getFactors } = require('./cpcdSceneFactors');
 
-/**
- * 垃圾清运/废弃物处理排放计算
- * @param {number} amount - 金额（元）
- * @returns {{ emissionsKg: number, amount: number, factor: number }}
- */
+function wasteFactorKgPerCny() {
+  return getFactors().wasteKgPerCny;
+}
+
 function wasteCalculator(amount) {
   const a = Number(amount);
   const validA = !Number.isNaN(a) && a >= 0 ? a : 0;
+  const factor = wasteFactorKgPerCny();
   return {
-    emissionsKg: Math.round(validA * WASTE_FACTOR * 100) / 100,
+    emissionsKg: Math.round(validA * factor * 100) / 100,
     amount: validA,
-    factor: WASTE_FACTOR,
+    factor,
   };
 }
 
-/**
- * 从发票提取垃圾清运/废弃物相关金额
- * @param {Object} invoice
- * @returns {number} 金额，无法提取返回 0
- */
 function extractWasteAmount(invoice) {
   const items = Array.isArray(invoice?.items) ? invoice.items : [];
   const totalAmount = invoice?.totalAmount != null ? Number(invoice.totalAmount) : NaN;
@@ -45,5 +38,8 @@ function extractWasteAmount(invoice) {
 module.exports = {
   wasteCalculator,
   extractWasteAmount,
-  WASTE_FACTOR,
+  wasteFactorKgPerCny,
+  get WASTE_FACTOR() {
+    return wasteFactorKgPerCny();
+  },
 };

@@ -35,6 +35,9 @@ class InvoiceCategoryRecord:
     amount: float  # 金额（元）
     emission_kg: float  # 排放量 kgCO2e
     tax_code: Optional[str] = None
+    carbon_price_per_ton: float = 100.0  # 元/吨CO2e
+    carbon_price_date: Optional[str] = None  # 对应日期（YYYY-MM-DD）
+    carbon_cost_cny: float = 0.0  # 碳成本（元）
     created_at: Optional[str] = None
 
 
@@ -62,6 +65,9 @@ def _init_db(conn: sqlite3.Connection) -> None:
             amount REAL NOT NULL DEFAULT 0,
             emission_kg REAL NOT NULL DEFAULT 0,
             tax_code TEXT,
+            carbon_price_per_ton REAL NOT NULL DEFAULT 100,
+            carbon_price_date TEXT,
+            carbon_cost_cny REAL NOT NULL DEFAULT 0,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
@@ -90,9 +96,26 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
     """检查并自动应用数据库迁移"""
     row = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()
     current = row[0] if row and row[0] is not None else 0
-    # 版本1：初始化（无需额外操作，表已在 _init_db 中创建）
+    # 版本1：初始化
     if current < 1:
         conn.execute("INSERT OR IGNORE INTO schema_version(version) VALUES(1)")
+
+    # 版本2：为 invoice_categories 增加碳价与碳成本字段
+    if current < 2:
+        # SQLite 不支持同时检测列是否存在的标准语法，这里逐个 try/except
+        try:
+            conn.execute("ALTER TABLE invoice_categories ADD COLUMN carbon_price_per_ton REAL NOT NULL DEFAULT 100")
+        except Exception:
+            pass
+        try:
+            conn.execute("ALTER TABLE invoice_categories ADD COLUMN carbon_price_date TEXT")
+        except Exception:
+            pass
+        try:
+            conn.execute("ALTER TABLE invoice_categories ADD COLUMN carbon_cost_cny REAL NOT NULL DEFAULT 0")
+        except Exception:
+            pass
+        conn.execute("INSERT OR IGNORE INTO schema_version(version) VALUES(2)")
 
 
 def get_connection() -> sqlite3.Connection:
@@ -209,10 +232,21 @@ def add_invoice_category(record: InvoiceCategoryRecord) -> int:
     try:
         cur = conn.execute(
             """INSERT INTO invoice_categories
-               (invoice_number, line_name, scope, match_type, amount, emission_kg, tax_code)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (record.invoice_number, record.line_name, record.scope,
-             record.match_type, record.amount, record.emission_kg, record.tax_code),
+               (invoice_number, line_name, scope, match_type, amount, emission_kg, tax_code,
+                carbon_price_per_ton, carbon_price_date, carbon_cost_cny)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                record.invoice_number,
+                record.line_name,
+                record.scope,
+                record.match_type,
+                record.amount,
+                record.emission_kg,
+                record.tax_code,
+                float(record.carbon_price_per_ton),
+                record.carbon_price_date,
+                float(record.carbon_cost_cny),
+            ),
         )
         conn.commit()
         return cur.lastrowid
@@ -228,10 +262,21 @@ def add_invoice_categories_batch(records: List[InvoiceCategoryRecord]) -> List[i
         for rec in records:
             cur = conn.execute(
                 """INSERT INTO invoice_categories
-                   (invoice_number, line_name, scope, match_type, amount, emission_kg, tax_code)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (rec.invoice_number, rec.line_name, rec.scope,
-                 rec.match_type, rec.amount, rec.emission_kg, rec.tax_code),
+                   (invoice_number, line_name, scope, match_type, amount, emission_kg, tax_code,
+                    carbon_price_per_ton, carbon_price_date, carbon_cost_cny)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    rec.invoice_number,
+                    rec.line_name,
+                    rec.scope,
+                    rec.match_type,
+                    rec.amount,
+                    rec.emission_kg,
+                    rec.tax_code,
+                    float(rec.carbon_price_per_ton),
+                    rec.carbon_price_date,
+                    float(rec.carbon_cost_cny),
+                ),
             )
             ids.append(cur.lastrowid)
         conn.commit()
@@ -246,7 +291,9 @@ def list_invoice_categories() -> List[InvoiceCategoryRecord]:
     try:
         rows = conn.execute(
             """SELECT id, invoice_number, line_name, scope, match_type,
-                      amount, emission_kg, tax_code, created_at
+                      amount, emission_kg, tax_code,
+                      carbon_price_per_ton, carbon_price_date, carbon_cost_cny,
+                      created_at
                FROM invoice_categories ORDER BY id DESC"""
         ).fetchall()
         return [
@@ -259,6 +306,9 @@ def list_invoice_categories() -> List[InvoiceCategoryRecord]:
                 amount=r["amount"],
                 emission_kg=r["emission_kg"],
                 tax_code=r["tax_code"],
+                carbon_price_per_ton=r["carbon_price_per_ton"] if "carbon_price_per_ton" in r.keys() else 100.0,
+                carbon_price_date=r["carbon_price_date"] if "carbon_price_date" in r.keys() else None,
+                carbon_cost_cny=r["carbon_cost_cny"] if "carbon_cost_cny" in r.keys() else 0.0,
                 created_at=r["created_at"],
             )
             for r in rows
@@ -268,14 +318,15 @@ def list_invoice_categories() -> List[InvoiceCategoryRecord]:
 
 
 def get_invoice_category_stats() -> Dict[str, dict]:
-    """按 Scope 汇总发票类别统计：总金额、总排放量、条目数"""
+    """按 Scope 汇总发票类别统计：总金额、总排放量、条目数、总碳成本"""
     conn = get_connection()
     try:
         rows = conn.execute(
             """SELECT scope,
                       COUNT(*) as count,
                       COALESCE(SUM(amount), 0) as total_amount,
-                      COALESCE(SUM(emission_kg), 0) as total_emission_kg
+                      COALESCE(SUM(emission_kg), 0) as total_emission_kg,
+                      COALESCE(SUM(carbon_cost_cny), 0) as total_carbon_cost_cny
                FROM invoice_categories
                GROUP BY scope
                ORDER BY scope"""
@@ -285,6 +336,7 @@ def get_invoice_category_stats() -> Dict[str, dict]:
                 "count": r["count"],
                 "total_amount": round(r["total_amount"], 2),
                 "total_emission_kg": round(r["total_emission_kg"], 4),
+                "total_carbon_cost_cny": round(r["total_carbon_cost_cny"], 2),
             }
             for r in rows
         }

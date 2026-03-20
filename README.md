@@ -37,8 +37,13 @@ CarbonCalculator/
 ├── requirements.txt
 ├── run_server.py                 # 启动碳足迹 Agent 前后端（FastAPI + 前端）
 ├── reference table.xlsx           # 税收分类编码→排放范围映射表（可导入 SQLite）
-├── Emission factors.csv           # CPCD 电网等排放因子（invoice-parser 可读）
+├── Emission factors.csv           # CPCD 扩展库（与 core 合并入 cpcd_catalog.csv）
 ├── data/
+│   ├── core.csv                   # CPCD 核心库快照（固定，不例行更新）
+│   ├── cpcd_catalog.csv           # core + Emission factors 去重合并（脚本生成）
+│   ├── grid_carbon_factors.json   # 电网/发电/输配电（脚本自 core 生成）
+│   ├── transport_factors.json     # 货运吨公里（脚本自 core[+xlsx] 生成）
+│   ├── transport.xlsx             # 运输因子补充（可选）
 │   ├── reference_table.db        # （可选）由脚本从 xlsx 导入的 SQLite
 │   ├── reference_schema.sql
 │   ├── tax_code_to_scope.csv
@@ -77,6 +82,8 @@ CarbonCalculator/
 │       ├── audit/                # 审计追踪：auditTrail、auditLogger、dataProvenance、报告模板
 │       ├── scenarios/            # 场景专项（水电/住宿/交通等）
 │       └── models/               # Invoice、EmissionResult
+├── tools/
+│   └── merge_core_into_datasets.py  # core.csv → grid + transport JSON + cpcd_catalog
 ├── scripts/
 │   └── import_reference_table_to_db.py   # xlsx → SQLite
 ├── examples/
@@ -84,6 +91,28 @@ CarbonCalculator/
 │   └── cpcd_match_demo.py
 └── tests/
 ```
+
+## `data/` 数据文件说明
+
+| 文件 | 含义与用途 |
+|------|------------|
+| **`core.csv`** | **CPCD 核心数据库的历史快照**（**项目内固定，后续不再例行更新**）。曾用于首批生成下方 JSON/目录；列为产品ID、名称、核算边界、碳足迹、年份、数据类型等。 |
+| **`cpcd_catalog.csv`** | **合并后的 CPCD 产品目录**。生成规则：`core.csv` 去重后 **优先**，再追加 `Emission factors.csv` 中 **产品ID 不在 core** 的行。Python `cpcd_matcher` / `cpcd_flight_factor` **若存在此文件则优先读它**，否则回退 `Emission factors.csv`。**后续增加 CPCD 产品请优先改 `Emission factors.csv` 并视需要重建目录（见下）**。 |
+| **`Emission factors.csv`** | CPCD **扩展与日常更新入口**（文献数据、新批次产品等）。新增行会进入 `cpcd_catalog`（与 core 产品ID 不冲突时）。 |
+| **`grid_carbon_factors.json`** | **电网与电源结构因子**（运行时实际使用）。由历史快照脚本基于 `core.csv` 生成过一次；**日后若要改电力因子，请直接编辑本文件**（或小幅扩展脚本），不必再动 `core.csv`。 |
+| **`transport_factors.json`** | **货运吨公里因子**（运行时实际使用）。同上，可直接编辑；公路补充仍可用 `transport.xlsx` + 按需运行合并脚本。 |
+| **`transport.xlsx`** | **公路等运输类补充表**。格式可为 CPCD 无表头五列或自带表头；运行合并脚本时可将 **仅存在于 xlsx** 的产品 **追加** 进 `transport_factors.json`。 |
+| **`emission_factors.csv`** | **项目内置简化因子表**（税号映射可用的 `electricity_heat`、煤油气、Scope3 EEIO 占位等），供 Python `EmissionFactorStore` 使用；**不等同**于 CPCD 全库。 |
+| **`2023.pdf` / `2024.pdf`** | 生态环境部门等发布的电力碳因子 **官方 PDF 原文**（审计、对照用）。应用运行时以 `grid_carbon_factors.json` 为准。 |
+| **`reference_table.db` / `scope_mapping_rules.yaml` 等** | 税收编码→Scope/因子ID 映射，与排放因子库相互独立。 |
+
+**维护说明（`core.csv` 已冻结、不再例行更新）**
+
+- 运行时以 **`grid_carbon_factors.json`、`transport_factors.json`、`cpcd_catalog.csv`** 为准；**电力/货运因子**可直接改对应 JSON。
+- **新增 CPCD 产品**：写入 **`Emission factors.csv`** 后，仅重算合并目录（**不覆盖** 电网/货运 JSON）：  
+  `python tools/merge_core_into_datasets.py --catalog-only`
+- **必须从 core + xlsx 全量重算** `grid_carbon_factors.json` / `transport_factors.json` 时（会覆盖手改）：  
+  `python tools/merge_core_into_datasets.py`
 
 ## 依赖与运行
 

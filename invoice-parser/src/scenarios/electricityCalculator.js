@@ -86,7 +86,7 @@ function calculateElectricity(invoice, region = '全国') {
   if (extracted.error) return extracted;
 
   const factorObj = getFactorByCategory(FACTOR_CATEGORY.ELECTRICITY, (region || '全国').trim() || '全国');
-  const factorValue = factorObj && typeof factorObj.value === 'number' ? factorObj.value : 0.5839;
+  const factorValue = factorObj && typeof factorObj.value === 'number' ? factorObj.value : 0.5777;
   const factorName = factorObj ? factorObj.name : '全国电网平均(默认)';
 
   const usageKWh = extracted.usageKWh;

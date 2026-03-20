@@ -4,7 +4,11 @@
 const { processElectricity, processWater } = require('./officeEnergy');
 const { extractCity, extractExplicitNights, estimateNights, calculateHotelEmission } = require('./hotelCalculator');
 const { extractTransportData, fuelCalculator, publicTransportCalculator, taxiCalculator } = require('./transportCalculator');
-const { extractLogisticsData, logisticsCalculator } = require('./logisticsCalculator');
+const {
+  extractLogisticsData,
+  logisticsCalculator,
+  logisticsCalculatorTonneKm,
+} = require('./logisticsCalculator');
 const { extractWasteAmount, wasteCalculator } = require('./wasteCalculator');
 
 /**
@@ -27,7 +31,7 @@ function processTransport(invoice) {
     return { success: true, emissionsKg: r.emissionsKg, type: 'public', amount: r.amount, factor: r.factor };
   }
   if (data.type === 'taxi') {
-    const r = taxiCalculator(data.amount);
+    const r = taxiCalculator(data.amount, data.hint || '');
     return { success: true, emissionsKg: r.emissionsKg, type: 'taxi', amount: r.amount, factor: r.factor };
   }
   return { success: false, error: '未识别的交通类型' };
@@ -39,10 +43,42 @@ function processTransport(invoice) {
  * @returns {{ success: boolean, emissionsKg?: number, amount?: number, factor?: number, transportMode?: string, error?: string }}
  */
 function processLogistics(invoice) {
-  const { amount, transportMode } = extractLogisticsData(invoice);
-  if (amount <= 0) return { success: false, error: '无法从发票提取物流金额' };
+  const data = extractLogisticsData(invoice);
+  const { amount, transportMode, tonKm, productId, combinedText } = data;
+
+  if (tonKm != null && tonKm > 0) {
+    const phys = logisticsCalculatorTonneKm(tonKm, transportMode, {
+      productId,
+      invoiceText: combinedText,
+    });
+    if (phys) {
+      return {
+        success: true,
+        emissionsKg: phys.emissionsKg,
+        amount: amount > 0 ? amount : undefined,
+        factor: phys.factor,
+        transportMode: phys.transportMode,
+        method: phys.method,
+        tonKm: phys.tonKm,
+        factorName: phys.factorName,
+        source: phys.source,
+        matchedProductId: phys.productId,
+      };
+    }
+  }
+
+  if (amount <= 0) {
+    return { success: false, error: '无法从发票提取物流金额或吨公里(活动数据)' };
+  }
   const r = logisticsCalculator(amount, transportMode);
-  return { success: true, emissionsKg: r.emissionsKg, amount: r.amount, factor: r.factor, transportMode: r.transportMode };
+  return {
+    success: true,
+    emissionsKg: r.emissionsKg,
+    amount: r.amount,
+    factor: r.factor,
+    transportMode: r.transportMode,
+    method: r.method,
+  };
 }
 
 /**

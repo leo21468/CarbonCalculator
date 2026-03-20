@@ -589,6 +589,65 @@
     }
   }
 
+  // ─── 面板5：机场距离计算 ───────────────────────────────────
+  function initDistancePanel() {
+    const fromInput = $('fromAirportInput');
+    const toInput = $('toAirportInput');
+    const btnCompute = $('btnComputeDistance');
+    const btnClear = $('btnClearDistance');
+    const resultEl = $('distanceResult');
+
+    if (!fromInput || !toInput || !btnCompute || !resultEl) return;
+
+    function showResult(body) {
+      const data = unwrap(body);
+      if (!data || !data.from || !data.to) {
+        resultEl.innerHTML = `<p class="error-msg">${(body && body.message) || '无法计算距离'}</p>`;
+        return;
+      }
+
+      const fromLabel = data.from.iata_code ? `${data.from.iata_code} - ${data.from.name}` : data.from.name;
+      const toLabel = data.to.iata_code ? `${data.to.iata_code} - ${data.to.name}` : data.to.name;
+      const distOut = data.distance_out != null ? Number(data.distance_out) : null;
+      const unit = data.distance_unit || 'km';
+
+      resultEl.innerHTML = `
+        <div class="result-item"><span class="k">起点机场</span><span class="v">${escapeHtml(fromLabel)}</span></div>
+        <div class="result-item"><span class="k">终点机场</span><span class="v">${escapeHtml(toLabel)}</span></div>
+        <div class="result-item"><span class="k">直线距离</span><span class="v">${distOut != null ? distOut.toFixed(2) : '-'} ${escapeHtml(unit)}</span></div>
+        <div class="result-item" style="margin-top:0.25rem;">
+          <span class="k">方法</span><span class="v">${escapeHtml(data.method || 'great_circle_haversine')}</span>
+        </div>
+      `;
+    }
+
+    async function doCompute() {
+      const from = (fromInput.value || '').trim();
+      const to = (toInput.value || '').trim();
+      if (!from || !to) {
+        resultEl.innerHTML = '<p class="error-msg">请输入起点与终点机场</p>';
+        return;
+      }
+
+      resultEl.innerHTML = '计算中...';
+      try {
+        const resp = await ApiClient.post('/api/airports/commute-distance', {
+          from_airport: from,
+          to_airport: to,
+        }, btnCompute);
+        showResult(resp);
+      } catch (e) {
+        resultEl.innerHTML = `<p class="error-msg">${e.message}</p>`;
+        Toast.error(e.message);
+      }
+    }
+
+    btnCompute.addEventListener('click', doCompute);
+    if (btnClear) btnClear.addEventListener('click', () => { resultEl.innerHTML = ''; });
+    fromInput.addEventListener('keydown', e => { if (e.key === 'Enter') doCompute(); });
+    toInput.addEventListener('keydown', e => { if (e.key === 'Enter') doCompute(); });
+  }
+
   // ─── 初始化 ───────────────────────────────────────────────
   document.addEventListener('DOMContentLoaded', () => {
     checkHealth();
@@ -598,6 +657,7 @@
     initManagePanel();
     initManageList();
     initProductListEvents();
+    initDistancePanel();
     loadProductList();
   });
 
