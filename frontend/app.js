@@ -152,6 +152,25 @@
     return ('data' in body) ? body.data : body;
   }
 
+  // ─── 主题切换 ─────────────────────────────────────────────
+  function initTheme() {
+    const html = document.documentElement;
+    const btn  = $('btnThemeToggle');
+    const saved = localStorage.getItem('carbon_theme') ??
+      (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+
+    function applyTheme(t) {
+      html.setAttribute('data-theme', t);
+      if (btn) btn.textContent = t === 'light' ? '🌙 深色' : '☀️ 浅色';
+      localStorage.setItem('carbon_theme', t);
+    }
+
+    applyTheme(saved);
+    if (btn) btn.addEventListener('click', () => {
+      applyTheme(html.getAttribute('data-theme') === 'light' ? 'dark' : 'light');
+    });
+  }
+
   // ─── 健康检查 ─────────────────────────────────────────────
   async function checkHealth() {
     const el = $('apiStatus');
@@ -205,11 +224,11 @@
       const sourceLabel = data.source === 'custom' ? '自定义产品库' : (data.source === 'cpcd' ? 'CPCD 碳足迹库' : (data.source || '未匹配'));
       const rows = [
         ['数据来源', `<span class="source-tag ${tag}">${sourceLabel}</span>`],
-        ['产品名称', data.product_name],
-        ['碳种类', `<span class="scope-tag ${sc}">${data.carbon_type}</span>`],
-        ['碳足迹', data.carbon_footprint || '-'],
+        ['产品名称', escapeHtml(data.product_name)],
+        ['碳种类', `<span class="scope-tag ${sc}">${escapeHtml(data.carbon_type)}</span>`],
+        ['碳足迹', escapeHtml(data.carbon_footprint || '-')],
         ['CO2当量 (kg/单位)', data.co2_per_unit_kg != null ? data.co2_per_unit_kg : '-'],
-        ['单位', data.unit || '-'],
+        ['单位', escapeHtml(data.unit || '-')],
         ['碳成本 (元/单位)', data.carbon_cost_cny != null ? '¥' + data.carbon_cost_cny : '-'],
       ];
       if (data.similarity != null) rows.splice(1, 0, ['相似度', data.similarity]);
@@ -267,11 +286,11 @@
     function showInvoiceResult(body) {
       const data = unwrap(body);
       const msg  = body.message || '';
-      let html = `<p style="color:var(--success);margin-bottom:0.75rem;">✓ ${msg}</p>`;
+      let html = `<p style="color:var(--success);margin-bottom:0.75rem;">✓ ${escapeHtml(msg)}</p>`;
       if (data.invoice_number || data.seller) {
         html += '<div style="margin-bottom:0.75rem;font-size:0.9rem;color:var(--muted);">';
-        if (data.invoice_number) html += `发票号码：${data.invoice_number}　`;
-        if (data.seller) html += `销方：${data.seller}`;
+        if (data.invoice_number) html += `发票号码：${escapeHtml(String(data.invoice_number))}　`;
+        if (data.seller) html += `销方：${escapeHtml(String(data.seller))}`;
         html += '</div>';
       }
       if (data.total_emissions_kg != null) {
@@ -306,8 +325,8 @@
           const nameSafe = escapeHtml(nameOneLine);
           const dataSource = l.emission_data_source || '-';
           html += `<tr><td class="name-cell" title="${nameSafe}">${nameSafe}</td>
-            <td><span class="scope-tag ${scopeClass(l.scope)}">${l.scope}</span></td>
-            <td>${l.match_type}</td><td>¥${l.amount}</td><td>${l.emission_kg}</td><td class="data-source-cell" title="${escapeHtml(dataSource)}">${escapeHtml(dataSource)}</td></tr>`;
+            <td><span class="scope-tag ${scopeClass(l.scope)}">${escapeHtml(l.scope)}</span></td>
+            <td>${escapeHtml(l.match_type)}</td><td>¥${escapeHtml(String(l.amount ?? ''))}</td><td>${escapeHtml(String(l.emission_kg ?? ''))}</td><td class="data-source-cell" title="${escapeHtml(dataSource)}">${escapeHtml(dataSource)}</td></tr>`;
         }
         html += '</table>';
         html += `<button class="secondary" style="margin-top:0.75rem;" id="btnExportInvoice">导出 CSV</button>`;
@@ -418,7 +437,7 @@
         addForm.reset();
         Toast.success('产品添加成功');
       } catch (e) {
-        addMsg.innerHTML = `<span class="error-msg">${e.message}</span>`;
+        addMsg.innerHTML = `<span class="error-msg">${escapeHtml(e.message)}</span>`;
         Toast.error(e.message);
       }
     });
@@ -449,22 +468,32 @@
     if (_sortField) {
       list.sort((a, b) => {
         const av = a[_sortField], bv = b[_sortField];
+        if (av == null && bv == null) return 0;
+        if (av == null) return _sortAsc ? -1 : 1;
+        if (bv == null) return _sortAsc ? 1 : -1;
+        if (av === bv) return 0;
         return _sortAsc ? (av > bv ? 1 : -1) : (av < bv ? 1 : -1);
       });
     }
     if (!list.length) { el.innerHTML = '<p style="color:var(--muted);padding:0.5rem;">暂无自定义数据</p>'; return; }
-    el.innerHTML = list.map(p => `
+    el.innerHTML = list.map(p => {
+      const pName = escapeHtml(p.product_name);
+      const pType = escapeHtml(p.carbon_type);
+      const pFootprint = escapeHtml(p.carbon_footprint || '-');
+      const pCo2 = escapeHtml(String(p.co2_per_unit ?? ''));
+      const pUnit = escapeHtml(p.unit || '');
+      return `
       <div class="product-item" data-id="${p.id}">
-        <span class="info" title="${p.product_name} | ${p.carbon_type} | ${p.carbon_footprint || '-'} | ${p.co2_per_unit} kg/${p.unit}">
-          <strong>${p.product_name}</strong>
-          <span style="color:var(--muted);margin-left:0.5rem;">${p.carbon_type}</span>
-          <span style="color:var(--success);margin-left:0.5rem;">${p.co2_per_unit} kg/${p.unit}</span>
+        <span class="info" title="${pName} | ${pType} | ${pFootprint} | ${pCo2} kg/${pUnit}">
+          <strong>${pName}</strong>
+          <span style="color:var(--muted);margin-left:0.5rem;">${pType}</span>
+          <span style="color:var(--success);margin-left:0.5rem;">${pCo2} kg/${pUnit}</span>
         </span>
         <span class="actions">
           <button class="secondary btn-delete-product" data-id="${p.id}">删除</button>
         </span>
-      </div>`
-    ).join('');
+      </div>`;
+    }).join('');
   }
 
   // 事件委托处理删除（避免全局函数污染）
@@ -535,9 +564,9 @@
         let totalCount = 0, totalAmount = 0, totalEmission = 0;
         let cardsHtml = '';
         for (const [scope, s] of Object.entries(stats)) {
-          totalCount    += s.count;
-          totalAmount   += s.total_amount;
-          totalEmission += s.total_emission_kg;
+          totalCount    += s.count || 0;
+          totalAmount   += s.total_amount || 0;
+          totalEmission += s.total_emission_kg || 0;
           const sc = scope.includes('1') ? 'scope1' : scope.includes('2') ? 'scope2' : 'scope3';
           cardsHtml += `<div class="stat-card">
             <div class="label"><span class="scope-tag ${sc}">${scope}</span></div>
@@ -563,9 +592,9 @@
         }
         let tbl = '<table class="category-table"><tr><th>发票号</th><th>名称</th><th>范围</th><th>匹配</th><th>金额</th><th>排放(kg)</th><th>时间</th></tr>';
         for (const c of categories) {
-          tbl += `<tr><td>${c.invoice_number || '-'}</td><td>${(c.line_name || '').replace(/\s+/g, ' ').trim()}</td>
-            <td><span class="scope-tag ${scopeClass(c.scope)}">${c.scope}</span></td>
-            <td>${c.match_type}</td><td>¥${c.amount}</td><td>${c.emission_kg}</td><td>${c.created_at || '-'}</td></tr>`;
+          tbl += `<tr><td>${escapeHtml(c.invoice_number || '-')}</td><td>${escapeHtml((c.line_name || '').replace(/\s+/g, ' ').trim())}</td>
+            <td><span class="scope-tag ${scopeClass(c.scope)}">${escapeHtml(c.scope)}</span></td>
+            <td>${escapeHtml(c.match_type)}</td><td>¥${escapeHtml(String(c.amount ?? ''))}</td><td>${escapeHtml(String(c.emission_kg ?? ''))}</td><td>${escapeHtml(c.created_at || '-')}</td></tr>`;
         }
         tbl += '</table>';
         tbl += `<button class="secondary" id="btnExportStats" style="margin-top:0.75rem;">导出 CSV</button>`;
@@ -650,6 +679,7 @@
 
   // ─── 初始化 ───────────────────────────────────────────────
   document.addEventListener('DOMContentLoaded', () => {
+    initTheme();
     checkHealth();
     initTabs();
     initQueryPanel();
