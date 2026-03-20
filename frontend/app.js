@@ -429,15 +429,21 @@
         price_per_ton: parseFloat(fd.get('price_per_ton')) || 100,
         remark: fd.get('remark') || '',
       };
-      addMsg.innerHTML = '';
+      addMsg.replaceChildren();
       const btn = addForm.querySelector('button[type=submit]');
       try {
         await ApiClient.post('/api/products', body, btn);
-        addMsg.innerHTML = '<span style="color:var(--success)">✓ 添加成功</span>';
+        const okSpan = document.createElement('span');
+        okSpan.style.color = 'var(--success)';
+        okSpan.textContent = '✓ 添加成功';
+        addMsg.appendChild(okSpan);
         addForm.reset();
         Toast.success('产品添加成功');
       } catch (e) {
-        addMsg.innerHTML = `<span class="error-msg">${escapeHtml(e.message)}</span>`;
+        const errSpan = document.createElement('span');
+        errSpan.className = 'error-msg';
+        errSpan.textContent = e.message != null ? String(e.message) : '';
+        addMsg.appendChild(errSpan);
         Toast.error(e.message);
       }
     });
@@ -475,25 +481,53 @@
         return _sortAsc ? (av > bv ? 1 : -1) : (av < bv ? 1 : -1);
       });
     }
-    if (!list.length) { el.innerHTML = '<p style="color:var(--muted);padding:0.5rem;">暂无自定义数据</p>'; return; }
-    el.innerHTML = list.map(p => {
-      const pName = escapeHtml(p.product_name);
-      const pType = escapeHtml(p.carbon_type);
-      const pFootprint = escapeHtml(p.carbon_footprint || '-');
-      const pCo2 = escapeHtml(String(p.co2_per_unit ?? ''));
-      const pUnit = escapeHtml(p.unit || '');
-      return `
-      <div class="product-item" data-id="${p.id}">
-        <span class="info" title="${pName} | ${pType} | ${pFootprint} | ${pCo2} kg/${pUnit}">
-          <strong>${pName}</strong>
-          <span style="color:var(--muted);margin-left:0.5rem;">${pType}</span>
-          <span style="color:var(--success);margin-left:0.5rem;">${pCo2} kg/${pUnit}</span>
-        </span>
-        <span class="actions">
-          <button class="secondary btn-delete-product" data-id="${p.id}">删除</button>
-        </span>
-      </div>`;
-    }).join('');
+    el.replaceChildren();
+    if (!list.length) {
+      const empty = document.createElement('p');
+      empty.style.color = 'var(--muted)';
+      empty.style.padding = '0.5rem';
+      empty.textContent = '暂无自定义数据';
+      el.appendChild(empty);
+      return;
+    }
+    const frag = document.createDocumentFragment();
+    for (const p of list) {
+      const row = document.createElement('div');
+      row.className = 'product-item';
+      row.dataset.id = String(p.id);
+
+      const info = document.createElement('span');
+      info.className = 'info';
+      info.title = `${p.product_name} | ${p.carbon_type} | ${p.carbon_footprint || '-'} | ${p.co2_per_unit} kg/${p.unit}`;
+
+      const strong = document.createElement('strong');
+      strong.textContent = p.product_name != null ? String(p.product_name) : '';
+      info.appendChild(strong);
+
+      const spanType = document.createElement('span');
+      spanType.style.color = 'var(--muted)';
+      spanType.style.marginLeft = '0.5rem';
+      spanType.textContent = p.carbon_type != null ? String(p.carbon_type) : '';
+      info.appendChild(spanType);
+
+      const spanCo2 = document.createElement('span');
+      spanCo2.style.color = 'var(--success)';
+      spanCo2.style.marginLeft = '0.5rem';
+      spanCo2.textContent = `${p.co2_per_unit} kg/${p.unit}`;
+
+      const actions = document.createElement('span');
+      actions.className = 'actions';
+      const delBtn = document.createElement('button');
+      delBtn.className = 'secondary btn-delete-product';
+      delBtn.dataset.id = String(p.id);
+      delBtn.textContent = '删除';
+      actions.appendChild(delBtn);
+
+      row.appendChild(info);
+      row.appendChild(actions);
+      frag.appendChild(row);
+    }
+    el.appendChild(frag);
   }
 
   // 事件委托处理删除（避免全局函数污染）
