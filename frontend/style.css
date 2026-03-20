@@ -9,6 +9,21 @@
   --warning: #d29922;
   --danger: #f85149;
   --info: #79c0ff;
+  color-scheme: dark;
+}
+
+[data-theme="light"] {
+  --bg: #f6f8fa;
+  --card: #ffffff;
+  --text: #24292f;
+  --muted: #656d76;
+  --accent: #0969da;
+  --success: #1a7f37;
+  --border: #d0d7de;
+  --warning: #9a6700;
+  --danger: #cf222e;
+  --info: #0550ae;
+  color-scheme: light;
 }
 
 * { box-sizing: border-box; }
@@ -21,6 +36,11 @@ body {
   min-height: 100vh;
   margin: 0;
   padding: 2rem 1rem;
+  transition: background-color 0.25s, color 0.25s;
+}
+
+[data-theme="light"] body {
+  background: linear-gradient(135deg, #f0f4f8 0%, #e8f0fe 100%);
 }
 
 .container {
@@ -82,6 +102,11 @@ h1 {
   padding: 1.5rem;
   margin-bottom: 1.5rem;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+  transition: background 0.25s, border-color 0.25s, box-shadow 0.25s;
+}
+
+[data-theme="light"] .card {
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
 }
 
 /* 表单 */
@@ -189,6 +214,11 @@ button.danger {
 .toast.error   { background: #3d1515; color: #f85149; border: 1px solid #f85149; }
 .toast.info    { background: #1a2e4a; color: #79c0ff; border: 1px solid #79c0ff; }
 
+[data-theme="light"] .toast.success { background: #dafbe1; color: #1a7f37; border: 1px solid #82cfb0; }
+[data-theme="light"] .toast.error   { background: #ffebe9; color: #cf222e; border: 1px solid #f7a5a0; }
+[data-theme="light"] .toast.info    { background: #ddf4ff; color: #0550ae; border: 1px solid #80c6ff; }
+[data-theme="light"] .toast        { box-shadow: 0 4px 16px rgba(0,0,0,0.12); }
+
 @keyframes slideIn {
   from { opacity: 0; transform: translateX(40px); }
   to   { opacity: 1; transform: translateX(0); }
@@ -274,6 +304,11 @@ button.danger {
   padding: 1rem;
   text-align: center;
   box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+  transition: background 0.25s, border-color 0.25s;
+}
+
+[data-theme="light"] .stat-card {
+  box-shadow: 0 1px 4px rgba(0,0,0,0.06);
 }
 
 .stat-card .label { color: var(--muted); font-size: 0.8rem; margin-bottom: 0.3rem; }
@@ -377,6 +412,10 @@ button.danger {
   box-shadow: 0 8px 32px rgba(0,0,0,0.5);
 }
 
+[data-theme="light"] .dialog-box {
+  box-shadow: 0 8px 32px rgba(0,0,0,0.15);
+}
+
 .dialog-box h3 { margin-top: 0; font-size: 1.1rem; }
 .dialog-box p  { color: var(--muted); font-size: 0.9rem; }
 
@@ -385,4 +424,25 @@ button.danger {
   gap: 0.5rem;
   justify-content: flex-end;
   margin-top: 1.25rem;
+}
+
+/* 主题切换按钮 */
+.btn-theme {
+  position: fixed;
+  top: 1rem;
+  right: 1rem;
+  background: var(--card);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  padding: 0.35rem 0.85rem;
+  border-radius: 20px;
+  font-size: 0.85rem;
+  z-index: 1000;
+  transition: background 0.25s, border-color 0.15s, color 0.15s;
+}
+
+.btn-theme:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  opacity: 1;
 }
