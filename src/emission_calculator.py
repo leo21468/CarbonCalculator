@@ -11,6 +11,7 @@ from .models import ClassifiedLineItem, EmissionResult, Scope
 from .emission_factors import EmissionFactorStore
 from .flight_utils import extract_iata_pair, get_airport_by_iata, haversine_distance_km
 from .cpcd_flight_factor import get_cpcd_carbon_footprint, parse_carbon_footprint_to_factor_kg
+from .waste_disposal_allocation import compute_waste_emission_kg, is_waste_allocation_factor
 
 
 # 单位标准化：发票常用单位 → 因子表单位
@@ -70,6 +71,10 @@ class EmissionCalculator:
         # 酒店专用分支：国外酒店走 CPCD 的“酒店住宿”因子
         if factor_id == "cpcd_hotel":
             return self._calculate_hotel_accommodation_cpcd(classified, line)
+
+        # 废弃物：数量×销售产品单台重量(kg)→吨，再按路径比例×CPCD 处置因子
+        if is_waste_allocation_factor(factor_id):
+            return self._calculate_waste_disposal_allocation(classified, factor_id)
 
         factor = self.factors.get(factor_id)
         if not factor:
@@ -258,6 +263,50 @@ class EmissionCalculator:
             emission_kg=float(emission_kg),
             method="hotel_cpcd",
             factor_used=float(factor_val_kg),
+        )
+
+    def _calculate_waste_disposal_allocation(
+        self,
+        classified: ClassifiedLineItem,
+        factor_id: str,
+    ) -> Optional[EmissionResult]:
+        """
+        活动数据 = 发票数量 × 自定义产品单台重量(kg)；吨 × Σ(路径比例 × CPCD kgCO2e/吨)。
+        无单台重量时回退为垃圾清运费金额 × scope3_waste（EEIO）。
+        """
+        from backend.database import find_by_name
+
+        line = classified.line
+        prod = find_by_name((line.name or "").strip())
+        uw = None
+        if prod and prod.unit_weight_kg is not None and prod.unit_weight_kg > 0:
+            uw = float(prod.unit_weight_kg)
+        if uw is None or uw <= 0:
+            amount_cny = float(line.amount or 0.0)
+            if amount_cny > 0:
+                wf = self.factors.get("scope3_waste") or {"kg_co2e_per_unit": 0.0419}
+                k = float(wf.get("kg_co2e_per_unit", 0.0419))
+                return EmissionResult(
+                    scope=classified.scope,
+                    quantity=amount_cny,
+                    unit="CNY",
+                    emission_kg=amount_cny * k,
+                    method="eeio",
+                    factor_used=k,
+                )
+            return None
+
+        qty = float(line.quantity) if line.quantity is not None and line.quantity > 0 else 1.0
+        mass_t = (qty * uw) / 1000.0
+        emission_kg = compute_waste_emission_kg(mass_t, factor_id)
+        blended_kg_per_t = (emission_kg / mass_t) if mass_t > 0 else 0.0
+        return EmissionResult(
+            scope=classified.scope,
+            quantity=mass_t,
+            unit="t",
+            emission_kg=float(emission_kg),
+            method="waste_allocation",
+            factor_used=float(blended_kg_per_t),
         )
 
     def calculate_batch(self, classified_lines: List[ClassifiedLineItem]) -> List[EmissionResult]:

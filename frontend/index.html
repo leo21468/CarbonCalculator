@@ -1,8 +1,9 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="dark">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="dark light">
   <title>碳足迹 Agent</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
@@ -36,9 +37,6 @@
       </div>
     </div>
 
-    <!-- ───────────────────────────────────────────────── -->
-    <!-- 面板2：发票分析                                    -->
-    <!-- ───────────────────────────────────────────────── -->
     <div class="panel" id="panel-invoice">
       <div class="card">
         <div class="tabs" style="margin-bottom:1rem;">
@@ -52,18 +50,25 @@
               <label>选择发票文件（PDF / XML / OFD）*</label>
               <input type="file" id="invoiceFile" accept=".pdf,.xml,.ofd" style="padding:0.6rem;cursor:pointer;">
             </div>
-            <p style="color:var(--muted);font-size:0.8rem;margin:0 0 1rem;">
-              支持中国增值税电子发票 PDF、XML 及 OFD 格式，系统将自动提取明细行并分类至 Scope 1/2/3
-            </p>
+            <div class="row" style="display:flex;flex-wrap:wrap;gap:0.75rem;align-items:flex-end;">
+              <div>
+                <label for="invoiceCarbonPrice">核算用碳价（元/吨 CO2e，可选）</label>
+                <input type="number" id="invoiceCarbonPrice" placeholder="默认走后端配置" step="0.01" min="0" style="max-width:12rem;">
+              </div>
+              <div>
+                <label for="invoiceCarbonPriceDate">碳价日期（可选，YYYY-MM-DD）</label>
+                <input type="text" id="invoiceCarbonPriceDate" placeholder="默认用发票日期" style="max-width:11rem;">
+              </div>
+            </div>
             <button type="submit" id="btnUpload">上传并分类</button>
           </form>
         </div>
 
         <div id="invoiceJsonSection" style="display:none;">
           <div class="row add-form">
-            <label>发票 JSON（需含 lines 或 items，可选 seller、invoice_number、total_amount）</label>
+            <label>发票 JSON（标准：lines/items；或费控响应）</label>
             <textarea id="invoiceJsonInput" rows="10"
-              placeholder='{"lines":[{"name":"电力*电费*","amount":4000,"quantity":5000,"unit":"度"}],"seller":{"name":"国网上海"},"invoice_number":"INV001"}'
+              placeholder='{"lines":[{"name":"*电力*电费","amount":800,"quantity":1000,"unit":"度"}],"invoice_number":"INV001"}'
               style="font-family:monospace;font-size:0.85rem;"></textarea>
           </div>
           <button type="button" id="btnSubmitJson">提交并核算</button>
@@ -72,6 +77,7 @@
         <div id="invoiceResult" class="result"></div>
       </div>
     </div>
+
 
     <!-- ───────────────────────────────────────────────── -->
     <!-- 面板3：数据管理                                    -->
@@ -107,6 +113,10 @@
           <div class="row">
             <label>碳价 (元/吨)</label>
             <input type="number" name="price_per_ton" value="100" step="1">
+          </div>
+          <div class="row">
+            <label>单台重量 (kg)</label>
+            <input type="number" name="unit_weight_kg" step="0.001" min="0" placeholder="废弃物核算：数量×本值=活动量">
           </div>
           <div class="row">
             <label>备注</label>
@@ -150,9 +160,6 @@
       </div>
     </div>
 
-    <!-- ───────────────────────────────────────────────── -->
-    <!-- 面板4：统计报表                                    -->
-    <!-- ───────────────────────────────────────────────── -->
     <div class="panel" id="panel-stats">
       <div class="card">
         <h3 style="margin-top:0;font-size:1.05rem;">发票类别统计</h3>
@@ -160,20 +167,40 @@
         <h3 style="font-size:1.05rem;">类别明细记录</h3>
         <div style="max-height:360px;overflow-y:auto;" id="categoryList">加载中...</div>
       </div>
-
-      <!-- 图表占位 -->
-      <div class="card">
-        <h3 style="margin-top:0;font-size:1.05rem;">图表分析</h3>
-        <div class="chart-placeholder">
-          📊 图表功能即将上线<br>
-          <span style="font-size:0.8rem;">将支持各 Scope 排放趋势、行业分布饼图等可视化分析</span>
-        </div>
-      </div>
     </div>
+
   </div><!-- /.container -->
 
-  <!-- Toast 容器由 app.js 动态创建 -->
+  <!-- Toast 容器由 app.js 动态创建；主题切换内联绑定，避免 app.js 未加载时按钮无效 -->
   <button type="button" class="btn-theme" id="btnThemeToggle" title="切换深色/浅色模式">🌙 深色</button>
+  <script>
+  (function () {
+    var root = document.documentElement;
+    var btn = document.getElementById('btnThemeToggle');
+    function labelFor(mode) { return mode === 'light' ? '🌙 深色' : '☀️ 浅色'; }
+    function applyMode(mode) {
+      var m = mode === 'light' ? 'light' : 'dark';
+      root.setAttribute('data-theme', m);
+      document.body.setAttribute('data-theme', m);
+      if (btn) btn.textContent = labelFor(m);
+      try { localStorage.setItem('carbon_theme', m); } catch (e) {}
+    }
+    var stored = null;
+    try { stored = localStorage.getItem('carbon_theme'); } catch (e) {}
+    var initial = (stored === 'light' || stored === 'dark') ? stored
+      : (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+    applyMode(initial);
+    if (btn) {
+      btn.addEventListener('click', function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        var cur = root.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+        applyMode(cur === 'light' ? 'dark' : 'light');
+      });
+    }
+    window.__carbonThemeBound = true;
+  })();
+  </script>
   <script src="/static/app.js"></script>
 </body>
 </html>

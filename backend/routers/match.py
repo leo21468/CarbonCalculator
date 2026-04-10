@@ -74,6 +74,7 @@ def match_product(req: MatchRequest):
                     "carbon_footprint": custom.carbon_footprint,
                     "co2_per_unit_kg": custom.co2_per_unit,
                     "unit": custom.unit,
+                    "unit_weight_kg": getattr(custom, "unit_weight_kg", None),
                     "carbon_cost_cny": round(cost, 2),
                     "price_per_ton": custom.price_per_ton,
                 },

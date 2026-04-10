@@ -16,6 +16,8 @@ sys.path.insert(0, str(ROOT))
 
 import pandas as pd
 
+from src.scope_mapping import default_ref_table_path
+
 # 与 scope_mapping 一致的列名候选
 SCOPE_COL_NAMES = ("排放范围", "scope", "Scope", "碳排放范围", "范围")
 TAX_CODE_COL_NAMES = ("税收分类编码", "商品和服务税收分类编码", "税号", "tax_code", "编码", "19位编码")
@@ -142,10 +144,14 @@ def import_xlsx_to_db(xlsx_path: Path, db_path: Path) -> int:
 
 def main():
     parser = argparse.ArgumentParser(description="将 reference table.xlsx 导入 SQLite")
-    parser.add_argument("--xlsx", default=None, help="xlsx 路径，默认项目根目录 reference table.xlsx")
+    parser.add_argument(
+        "--xlsx",
+        default=None,
+        help="xlsx 路径；默认先找项目根目录 reference table.xlsx，否则 data/reference table.xlsx",
+    )
     parser.add_argument("--db", default=None, help="SQLite 路径，默认 data/reference_table.db")
     args = parser.parse_args()
-    xlsx_path = Path(args.xlsx) if args.xlsx else ROOT / "reference table.xlsx"
+    xlsx_path = Path(args.xlsx) if args.xlsx else default_ref_table_path()
     db_path = Path(args.db) if args.db else ROOT / "data" / "reference_table.db"
     print(f"源文件: {xlsx_path}")
     print(f"目标库: {db_path}")

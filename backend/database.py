@@ -22,6 +22,7 @@ class CustomProduct:
     unit: str
     price_per_ton: float  # 碳价 元/吨
     remark: str = ""
+    unit_weight_kg: Optional[float] = None  # 单台/单件重量（kg），用于废弃物活动数据
 
 
 @dataclass
@@ -52,6 +53,7 @@ def _init_db(conn: sqlite3.Connection) -> None:
             unit TEXT NOT NULL,
             price_per_ton REAL DEFAULT 100,
             remark TEXT,
+            unit_weight_kg REAL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
@@ -117,6 +119,14 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
             pass
         conn.execute("INSERT OR IGNORE INTO schema_version(version) VALUES(2)")
 
+    # 版本3：custom_products 增加单台重量（kg），用于废弃物数量×重量核算
+    if current < 3:
+        try:
+            conn.execute("ALTER TABLE custom_products ADD COLUMN unit_weight_kg REAL")
+        except Exception:
+            pass
+        conn.execute("INSERT OR IGNORE INTO schema_version(version) VALUES(3)")
+
 
 def get_connection() -> sqlite3.Connection:
     conn = sqlite3.connect(_DB_PATH)
@@ -131,9 +141,18 @@ def add_product(p: CustomProduct) -> int:
     try:
         cur = conn.execute(
             """INSERT INTO custom_products 
-               (product_name, carbon_type, carbon_footprint, co2_per_unit, unit, price_per_ton, remark)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (p.product_name, p.carbon_type, p.carbon_footprint, p.co2_per_unit, p.unit, p.price_per_ton, p.remark),
+               (product_name, carbon_type, carbon_footprint, co2_per_unit, unit, price_per_ton, remark, unit_weight_kg)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                p.product_name,
+                p.carbon_type,
+                p.carbon_footprint,
+                p.co2_per_unit,
+                p.unit,
+                p.price_per_ton,
+                p.remark,
+                p.unit_weight_kg,
+            ),
         )
         conn.commit()
         return cur.lastrowid
@@ -147,12 +166,12 @@ def list_products(name_filter: Optional[str] = None) -> List[CustomProduct]:
         if name_filter:
             escaped = name_filter.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
             rows = conn.execute(
-                "SELECT id, product_name, carbon_type, carbon_footprint, co2_per_unit, unit, price_per_ton, remark FROM custom_products WHERE product_name LIKE ? ESCAPE '\\' ORDER BY id DESC",
+                "SELECT id, product_name, carbon_type, carbon_footprint, co2_per_unit, unit, price_per_ton, remark, unit_weight_kg FROM custom_products WHERE product_name LIKE ? ESCAPE '\\' ORDER BY id DESC",
                 (f"%{escaped}%",),
             ).fetchall()
         else:
             rows = conn.execute(
-                "SELECT id, product_name, carbon_type, carbon_footprint, co2_per_unit, unit, price_per_ton, remark FROM custom_products ORDER BY id DESC"
+                "SELECT id, product_name, carbon_type, carbon_footprint, co2_per_unit, unit, price_per_ton, remark, unit_weight_kg FROM custom_products ORDER BY id DESC"
             ).fetchall()
         return [
             CustomProduct(
@@ -164,6 +183,7 @@ def list_products(name_filter: Optional[str] = None) -> List[CustomProduct]:
                 unit=r["unit"],
                 price_per_ton=r["price_per_ton"],
                 remark=r["remark"] or "",
+                unit_weight_kg=r["unit_weight_kg"] if "unit_weight_kg" in r.keys() else None,
             )
             for r in rows
         ]
@@ -176,7 +196,7 @@ def find_by_name(product_name: str) -> Optional[CustomProduct]:
     try:
         escaped = product_name.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         r = conn.execute(
-            "SELECT id, product_name, carbon_type, carbon_footprint, co2_per_unit, unit, price_per_ton, remark FROM custom_products WHERE product_name LIKE ? ESCAPE '\\' LIMIT 1",
+            "SELECT id, product_name, carbon_type, carbon_footprint, co2_per_unit, unit, price_per_ton, remark, unit_weight_kg FROM custom_products WHERE product_name LIKE ? ESCAPE '\\' LIMIT 1",
             (f"%{escaped}%",),
         ).fetchone()
         if r is None:
@@ -190,6 +210,7 @@ def find_by_name(product_name: str) -> Optional[CustomProduct]:
             unit=r["unit"],
             price_per_ton=r["price_per_ton"],
             remark=r["remark"] or "",
+            unit_weight_kg=r["unit_weight_kg"] if "unit_weight_kg" in r.keys() else None,
         )
     finally:
         conn.close()
@@ -208,7 +229,16 @@ def delete_product(product_id: int) -> bool:
 
 def update_product(product_id: int, fields: dict) -> bool:
     """部分更新产品字段，返回是否成功更新"""
-    allowed = {"product_name", "carbon_type", "carbon_footprint", "co2_per_unit", "unit", "price_per_ton", "remark"}
+    allowed = {
+        "product_name",
+        "carbon_type",
+        "carbon_footprint",
+        "co2_per_unit",
+        "unit",
+        "price_per_ton",
+        "remark",
+        "unit_weight_kg",
+    }
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
         return False

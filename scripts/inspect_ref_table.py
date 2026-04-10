@@ -4,7 +4,10 @@ import sys
 from pathlib import Path
 
 root = Path(__file__).resolve().parents[1]
-path = root / "reference table.xlsx"
+sys.path.insert(0, str(root))
+from src.scope_mapping import default_ref_table_path
+
+path = default_ref_table_path()
 print("Looking for:", path)
 print("Exists:", path.exists())
 if not path.exists():

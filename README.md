@@ -36,7 +36,7 @@ CarbonCalculator/
 ├── README.md
 ├── requirements.txt
 ├── run_server.py                 # 启动碳足迹 Agent 前后端（FastAPI + 前端）
-├── reference table.xlsx           # 税收分类编码→排放范围映射表（可导入 SQLite）
+├── reference table.xlsx           # 映射表（可选）；亦支持放在 data/reference table.xlsx（优先根目录，其次 data/）
 ├── Emission factors.csv           # CPCD 扩展库（与 core 合并入 cpcd_catalog.csv）
 ├── data/
 │   ├── core.csv                   # CPCD 核心库快照（固定，不例行更新）
@@ -44,6 +44,7 @@ CarbonCalculator/
 │   ├── grid_carbon_factors.json   # 电网/发电/输配电（脚本自 core 生成）
 │   ├── transport_factors.json     # 货运吨公里（脚本自 core[+xlsx] 生成）
 │   ├── transport.xlsx             # 运输因子补充（可选）
+│   ├── reference table.xlsx       # 映射表常见放置位置之一（与根目录二选一即可）
 │   ├── reference_table.db        # （可选）由脚本从 xlsx 导入的 SQLite
 │   ├── reference_schema.sql
 │   ├── tax_code_to_scope.csv
@@ -259,6 +260,13 @@ const htmlReport = auditLogger.exportAuditReport(invoice.invoiceNumber, 'html');
 - **查询**：输入产品名称（如电力、汽油、鸡蛋），返回碳种类、二氧化碳当量及碳成本价格  
 - **新增数据**：添加自定义产品碳足迹到 SQLite  
 - **自定义列表**：查看已添加的产品  
+- **发票与指定碳价（HTTP API）**  
+  - `POST /api/invoice/upload` — 上传 PDF/OFD/XML，碳价取自服务端默认配置。  
+  - `POST /api/invoice/upload_with_daily_carbon_price` — 表单字段：`file`（必填）、`carbon_price_per_ton`（必填）、`carbon_price_date`（可选，默认可用发票日期）。用于按给定单价计算每条明细的碳成本并写入统计。  
+  - `POST /api/invoice/process` — JSON 发票体，默认碳价。  
+  - `POST /api/invoice/process_with_daily_carbon_price` — JSON 体需含 `carbon_price_per_ton`（或 `carbon_prices` 与发票 `date` 匹配），可选 `carbon_price_date`。  
+  Web 前端「发票分析」中填写可选碳价字段时会自动走上述「含碳价」接口。  
+- **企业记账对接（草案）**：见 **[docs/ENTERPRISE_INTEGRATION.md](docs/ENTERPRISE_INTEGRATION.md)**。提供 `POST /api/integration/accounting-sync`（在标准发票 JSON 外带回显 `erp_context`），可选配置 `ERP_CARBON_RESULT_WEBHOOK_URL` 在核算成功后向贵司 URL POST 结果（占位实现，生产需补鉴权与重试）。
 
 ```bash
 python run_server.py

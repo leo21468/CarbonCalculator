@@ -154,20 +154,47 @@
 
   // ─── 主题切换 ─────────────────────────────────────────────
   function initTheme() {
+    /* index.html 内联脚本已绑定主题按钮时跳过，避免重复监听导致点一次切换两次 */
+    if (typeof window !== 'undefined' && window.__carbonThemeBound) return;
+
     const html = document.documentElement;
     const btn  = $('btnThemeToggle');
-    const saved = localStorage.getItem('carbon_theme') ??
-      (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
 
-    function applyTheme(t) {
-      html.setAttribute('data-theme', t);
-      if (btn) btn.textContent = t === 'light' ? '🌙 深色' : '☀️ 浅色';
-      localStorage.setItem('carbon_theme', t);
+    let stored = null;
+    try {
+      stored = localStorage.getItem('carbon_theme');
+    } catch (_) {
+      /* 私密浏览等场景下 localStorage 可能不可用 */
     }
 
-    applyTheme(saved);
-    if (btn) btn.addEventListener('click', () => {
-      applyTheme(html.getAttribute('data-theme') === 'light' ? 'dark' : 'light');
+    let initial = 'dark';
+    if (stored === 'light' || stored === 'dark') {
+      initial = stored;
+    } else {
+      try {
+        initial = window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+      } catch (_) { /* matchMedia 不可用时保持深色 */ }
+    }
+
+    function applyTheme(t) {
+      const mode = t === 'light' ? 'light' : 'dark';
+      html.setAttribute('data-theme', mode);
+      if (document.body) document.body.setAttribute('data-theme', mode);
+      if (btn) btn.textContent = mode === 'light' ? '🌙 深色' : '☀️ 浅色';
+      try {
+        localStorage.setItem('carbon_theme', mode);
+      } catch (_) { /* 忽略写入失败 */ }
+    }
+
+    applyTheme(initial);
+
+    if (!btn) return;
+
+    btn.addEventListener('click', e => {
+      e.preventDefault();
+      e.stopPropagation();
+      const cur = html.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+      applyTheme(cur === 'light' ? 'dark' : 'light');
     });
   }
 
@@ -193,7 +220,7 @@
         btn.classList.add('active');
         $('panel-' + btn.dataset.tab).classList.add('show');
         if (btn.dataset.tab === 'manage') loadProductList();
-        if (btn.dataset.tab === 'stats')  loadStats();
+        if (btn.dataset.tab === 'stats') loadStats();
       });
     });
   }
@@ -272,80 +299,10 @@
     History.render(historyEl, val => { input.value = val; doQuery(); });
   }
 
-  // ─── 面板2：发票分析 ──────────────────────────────────────
   function initInvoicePanel() {
     const invoiceResult = $('invoiceResult');
+    if (!invoiceResult) return;
 
-    function scopeClass(scope) {
-      if (!scope) return '';
-      if (scope.includes('1')) return 'scope1';
-      if (scope.includes('2')) return 'scope2';
-      return 'scope3';
-    }
-
-    function showInvoiceResult(body) {
-      const data = unwrap(body);
-      const msg  = body.message || '';
-      let html = `<p style="color:var(--success);margin-bottom:0.75rem;">✓ ${escapeHtml(msg)}</p>`;
-      if (data.invoice_number || data.seller) {
-        html += '<div style="margin-bottom:0.75rem;font-size:0.9rem;color:var(--muted);">';
-        if (data.invoice_number) html += `发票号码：${escapeHtml(String(data.invoice_number))}　`;
-        if (data.seller) html += `销方：${escapeHtml(String(data.seller))}`;
-        html += '</div>';
-      }
-      if (data.total_emissions_kg != null) {
-        html += `<div class="stat-card" style="margin-bottom:0.75rem;">
-          <div class="label">总排放</div>
-          <div class="value">${data.total_emissions_kg} kgCO2e</div>
-        </div>`;
-      }
-      if (data.aggregate) {
-        html += '<div class="stats-grid">';
-        for (const [scope, kg] of Object.entries(data.aggregate)) {
-          const kgNum = Number(kg);
-          const kgStr = (kgNum === 0 && !data.total_emissions_kg) ? '0' : (Number.isInteger(kgNum) ? kgNum : kgNum.toFixed(4));
-          html += `<div class="stat-card"><div class="label">${scope}</div><div class="value">${kgStr} kg</div></div>`;
-        }
-        html += '</div>';
-        if (data.total_emissions_kg === 0) {
-          if (!data.lines || data.lines.length === 0) {
-            html += '<p class="hint" style="margin-top:0.5rem;color:var(--muted);font-size:0.9rem;">未计算出排放量：所有明细已被过滤（如金额为 0 或表头行）。请确认 PDF 解析出的「金额」列是否正确。</p>';
-          } else {
-            const allZero = data.lines.every(l => !l.emission_kg || l.emission_kg === 0);
-            if (allZero) {
-              html += '<p class="hint" style="margin-top:0.5rem;color:var(--muted);font-size:0.9rem;">未计算出排放量：请检查发票明细中的「金额」是否已正确解析（金额需大于 0）。</p>';
-            }
-          }
-        }
-      }
-      if (data.lines && data.lines.length) {
-        html += '<table class="category-table"><tr><th>名称</th><th>范围</th><th>匹配方式</th><th>金额</th><th>排放(kg)</th><th>数据来源</th></tr>';
-        for (const l of data.lines) {
-          const nameOneLine = (l.name || '').replace(/\s+/g, ' ').trim();
-          const nameSafe = escapeHtml(nameOneLine);
-          const dataSource = l.emission_data_source || '-';
-          html += `<tr><td class="name-cell" title="${nameSafe}">${nameSafe}</td>
-            <td><span class="scope-tag ${scopeClass(l.scope)}">${escapeHtml(l.scope)}</span></td>
-            <td>${escapeHtml(l.match_type)}</td><td>¥${escapeHtml(String(l.amount ?? ''))}</td><td>${escapeHtml(String(l.emission_kg ?? ''))}</td><td class="data-source-cell" title="${escapeHtml(dataSource)}">${escapeHtml(dataSource)}</td></tr>`;
-        }
-        html += '</table>';
-        html += `<button class="secondary" style="margin-top:0.75rem;" id="btnExportInvoice">导出 CSV</button>`;
-      }
-      invoiceResult.innerHTML = html;
-
-      const btn = $('btnExportInvoice');
-      if (btn) {
-        btn.addEventListener('click', () => {
-          exportCSV(
-            data.lines.map(l => [(l.name || '').replace(/\s+/g, ' ').trim(), l.scope, l.match_type, l.amount, l.emission_kg, l.tax_code || '', l.emission_data_source || '']),
-            ['名称', '范围', '匹配方式', '金额', '排放(kg)', '税收编码', '数据来源'],
-            'invoice_result.csv'
-          );
-        });
-      }
-    }
-
-    // PDF 上传
     document.querySelectorAll('[data-invoice-mode]').forEach(btn => {
       btn.addEventListener('click', () => {
         document.querySelectorAll('[data-invoice-mode]').forEach(b => b.classList.remove('active'));
@@ -356,7 +313,7 @@
       });
     });
 
-    $('invoiceForm').addEventListener('submit', async e => {
+    $('invoiceForm')?.addEventListener('submit', async e => {
       e.preventDefault();
       const fileInput = $('invoiceFile');
       if (!fileInput.files || !fileInput.files.length) {
@@ -365,38 +322,32 @@
       }
       const fd = new FormData();
       fd.append('file', fileInput.files[0]);
-      invoiceResult.innerHTML = '解析中，请稍候...';
-      const btn = $('btnUpload');
+      invoiceResult.innerHTML = '处理中...';
       try {
-        const body = await ApiClient.post('/api/invoice/upload', fd, btn);
-        showInvoiceResult(body);
-        Toast.success('发票解析完成');
-      } catch (e) {
-        invoiceResult.innerHTML = `<p class="error-msg">${e.message}</p>`;
-        Toast.error(e.message);
+        const body = await ApiClient.post('/api/invoice/upload', fd, $('btnUpload'));
+        invoiceResult.innerHTML = `<pre>${escapeHtml(JSON.stringify(unwrap(body), null, 2))}</pre>`;
+      } catch (err) {
+        invoiceResult.innerHTML = `<p class="error-msg">${err.message}</p>`;
       }
     });
 
-    // JSON 提交
-    $('btnSubmitJson').addEventListener('click', async () => {
+    $('btnSubmitJson')?.addEventListener('click', async () => {
       const raw = $('invoiceJsonInput').value.trim();
-      if (!raw) { invoiceResult.innerHTML = '<p class="error-msg">请输入发票 JSON</p>'; return; }
+      if (!raw) {
+        invoiceResult.innerHTML = '<p class="error-msg">请输入发票 JSON</p>';
+        return;
+      }
       let body;
-      try { body = JSON.parse(raw); }
-      catch (e) { invoiceResult.innerHTML = `<p class="error-msg">JSON 格式错误：${e.message}</p>`; return; }
-      if (!body.lines && !body.items) {
-        invoiceResult.innerHTML = '<p class="error-msg">JSON 需包含 lines 或 items 数组</p>';
+      try { body = JSON.parse(raw); } catch (e) {
+        invoiceResult.innerHTML = `<p class="error-msg">JSON 格式错误：${e.message}</p>`;
         return;
       }
       invoiceResult.innerHTML = '处理中...';
-      const btn = $('btnSubmitJson');
       try {
-        const resp = await ApiClient.post('/api/invoice/process', body, btn);
-        showInvoiceResult(resp);
-        Toast.success('发票核算完成');
-      } catch (e) {
-        invoiceResult.innerHTML = `<p class="error-msg">${e.message}</p>`;
-        Toast.error(e.message);
+        const resp = await ApiClient.post('/api/invoice/process', body, $('btnSubmitJson'));
+        invoiceResult.innerHTML = `<pre>${escapeHtml(JSON.stringify(unwrap(resp), null, 2))}</pre>`;
+      } catch (err) {
+        invoiceResult.innerHTML = `<p class="error-msg">${err.message}</p>`;
       }
     });
   }
@@ -420,6 +371,8 @@
       nameInput.classList.remove('input-error');
       nameErr.classList.remove('show');
 
+      const uwRaw = fd.get('unit_weight_kg');
+      const uw = uwRaw != null && String(uwRaw).trim() !== '' ? parseFloat(uwRaw) : null;
       const body = {
         product_name: nameVal,
         carbon_type: fd.get('carbon_type'),
@@ -428,6 +381,7 @@
         unit: fd.get('unit'),
         price_per_ton: parseFloat(fd.get('price_per_ton')) || 100,
         remark: fd.get('remark') || '',
+        unit_weight_kg: uw != null && !Number.isNaN(uw) ? uw : null,
       };
       addMsg.replaceChildren();
       const btn = addForm.querySelector('button[type=submit]');
@@ -498,7 +452,8 @@
 
       const info = document.createElement('span');
       info.className = 'info';
-      info.title = `${p.product_name} | ${p.carbon_type} | ${p.carbon_footprint || '-'} | ${p.co2_per_unit} kg/${p.unit}`;
+      info.title = `${p.product_name} | ${p.carbon_type} | ${p.carbon_footprint || '-'} | ${p.co2_per_unit} kg/${p.unit}` +
+        (p.unit_weight_kg != null ? ` | 单台 ${p.unit_weight_kg} kg` : '');
 
       const strong = document.createElement('strong');
       strong.textContent = p.product_name != null ? String(p.product_name) : '';
@@ -513,7 +468,8 @@
       const spanCo2 = document.createElement('span');
       spanCo2.style.color = 'var(--success)';
       spanCo2.style.marginLeft = '0.5rem';
-      spanCo2.textContent = `${p.co2_per_unit} kg/${p.unit}`;
+      spanCo2.textContent = `${p.co2_per_unit} kg/${p.unit}` +
+        (p.unit_weight_kg != null ? ` · ${p.unit_weight_kg} kg/台` : '');
 
       const actions = document.createElement('span');
       actions.className = 'actions';
@@ -560,8 +516,8 @@
     btnExport.addEventListener('click', () => {
       if (!_productCache.length) { Toast.info('暂无数据可导出'); return; }
       exportCSV(
-        _productCache.map(p => [p.product_name, p.carbon_type, p.carbon_footprint, p.co2_per_unit, p.unit, p.price_per_ton]),
-        ['产品名称', '碳种类', '碳足迹描述', 'CO2当量(kg)', '单位', '碳价(元/吨)'],
+        _productCache.map(p => [p.product_name, p.carbon_type, p.carbon_footprint, p.co2_per_unit, p.unit, p.price_per_ton, p.unit_weight_kg ?? '']),
+        ['产品名称', '碳种类', '碳足迹描述', 'CO2当量(kg)', '单位', '碳价(元/吨)', '单台重量(kg)'],
         'custom_products.csv'
       );
       Toast.success('CSV 已导出');
@@ -579,76 +535,22 @@
     });
   }
 
-  // ─── 面板4：统计报表 ──────────────────────────────────────
   async function loadStats() {
-    const statsGrid    = $('statsGrid');
+    const statsGrid = $('statsGrid');
     const categoryList = $('categoryList');
-    statsGrid.innerHTML    = '加载中...';
+    if (!statsGrid || !categoryList) return;
+    statsGrid.innerHTML = '加载中...';
     categoryList.innerHTML = '加载中...';
-
     try {
       const [statsBody, catBody] = await Promise.all([
         ApiClient.get('/api/invoice/stats'),
         ApiClient.get('/api/invoice/categories'),
       ]);
-      const stats      = unwrap(statsBody);
-      const categories = unwrap(catBody);
-
-      if (stats && Object.keys(stats).length) {
-        let totalCount = 0, totalAmount = 0, totalEmission = 0;
-        let cardsHtml = '';
-        for (const [scope, s] of Object.entries(stats)) {
-          totalCount    += s.count || 0;
-          totalAmount   += s.total_amount || 0;
-          totalEmission += s.total_emission_kg || 0;
-          const sc = scope.includes('1') ? 'scope1' : scope.includes('2') ? 'scope2' : 'scope3';
-          cardsHtml += `<div class="stat-card">
-            <div class="label"><span class="scope-tag ${sc}">${scope}</span></div>
-            <div class="value">${s.count} 条</div>
-            <div style="color:var(--muted);font-size:0.8rem;">¥${s.total_amount} | ${s.total_emission_kg} kg</div>
-          </div>`;
-        }
-        statsGrid.innerHTML = `<div class="stat-card">
-          <div class="label">合计</div>
-          <div class="value">${totalCount} 条</div>
-          <div style="color:var(--muted);font-size:0.8rem;">¥${totalAmount.toFixed(2)} | ${totalEmission.toFixed(4)} kg</div>
-        </div>` + cardsHtml;
-      } else {
-        statsGrid.innerHTML = '<p style="color:var(--muted)">暂无统计数据，请先上传发票</p>';
-      }
-
-      if (categories && categories.length) {
-        function scopeClass(scope) {
-          if (!scope) return '';
-          if (scope.includes('1')) return 'scope1';
-          if (scope.includes('2')) return 'scope2';
-          return 'scope3';
-        }
-        let tbl = '<table class="category-table"><tr><th>发票号</th><th>名称</th><th>范围</th><th>匹配</th><th>金额</th><th>排放(kg)</th><th>时间</th></tr>';
-        for (const c of categories) {
-          tbl += `<tr><td>${escapeHtml(c.invoice_number || '-')}</td><td>${escapeHtml((c.line_name || '').replace(/\s+/g, ' ').trim())}</td>
-            <td><span class="scope-tag ${scopeClass(c.scope)}">${escapeHtml(c.scope)}</span></td>
-            <td>${escapeHtml(c.match_type)}</td><td>¥${escapeHtml(String(c.amount ?? ''))}</td><td>${escapeHtml(String(c.emission_kg ?? ''))}</td><td>${escapeHtml(c.created_at || '-')}</td></tr>`;
-        }
-        tbl += '</table>';
-        tbl += `<button class="secondary" id="btnExportStats" style="margin-top:0.75rem;">导出 CSV</button>`;
-        categoryList.innerHTML = tbl;
-
-        $('btnExportStats').addEventListener('click', () => {
-          exportCSV(
-            categories.map(c => [c.invoice_number, (c.line_name || '').replace(/\s+/g, ' ').trim(), c.scope, c.match_type, c.amount, c.emission_kg, c.created_at]),
-            ['发票号', '名称', '范围', '匹配方式', '金额', '排放(kg)', '时间'],
-            'invoice_categories.csv'
-          );
-          Toast.success('CSV 已导出');
-        });
-      } else {
-        categoryList.innerHTML = '<p style="color:var(--muted)">暂无类别记录</p>';
-      }
+      statsGrid.innerHTML = `<pre>${escapeHtml(JSON.stringify(unwrap(statsBody), null, 2))}</pre>`;
+      categoryList.innerHTML = `<pre>${escapeHtml(JSON.stringify(unwrap(catBody), null, 2))}</pre>`;
     } catch (e) {
-      statsGrid.innerHTML    = '加载失败';
+      statsGrid.innerHTML = `<p class="error-msg">${e.message}</p>`;
       categoryList.innerHTML = '';
-      Toast.error('统计加载失败：' + e.message);
     }
   }
 

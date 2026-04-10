@@ -21,6 +21,7 @@ from backend.routers.products import router as products_router
 from backend.routers.match import router as match_router
 from backend.routers.invoices import router as invoices_router
 from backend.routers.airports import router as airports_router
+from backend.routers.integration import router as integration_router
 
 logger = logging.getLogger("carbon_api")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -65,6 +66,7 @@ app.include_router(products_router)
 app.include_router(match_router)
 app.include_router(invoices_router)
 app.include_router(airports_router)
+app.include_router(integration_router)
 
 # ---------- 静态文件 ----------
 frontend_dir = ROOT / "frontend"

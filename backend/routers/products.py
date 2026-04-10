@@ -23,6 +23,7 @@ class ProductAddRequest(BaseModel):
     unit: str
     price_per_ton: float = 100.0
     remark: str = ""
+    unit_weight_kg: Optional[float] = None  # 单台/单件重量 kg，废弃物核算用
 
 
 class ProductUpdateRequest(BaseModel):
@@ -33,6 +34,7 @@ class ProductUpdateRequest(BaseModel):
     unit: Optional[str] = None
     price_per_ton: Optional[float] = None
     remark: Optional[str] = None
+    unit_weight_kg: Optional[float] = None
 
 
 @router.get(
@@ -62,6 +64,7 @@ def get_products(
                 "co2_per_unit": p.co2_per_unit,
                 "unit": p.unit,
                 "price_per_ton": p.price_per_ton,
+                "unit_weight_kg": p.unit_weight_kg,
             }
             for p in page_data
         ],
@@ -88,6 +91,7 @@ def create_product(req: ProductAddRequest):
         unit=req.unit.strip(),
         price_per_ton=req.price_per_ton,
         remark=req.remark.strip(),
+        unit_weight_kg=req.unit_weight_kg,
     )
     if not p.product_name:
         raise HTTPException(status_code=400, detail="产品名称不能为空")

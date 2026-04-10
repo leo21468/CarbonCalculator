@@ -1,7 +1,7 @@
 """
 第二步（一）：税收分类编码 → 排放范围 映射表加载与查询。
 优先从 SQLite（data/reference_table.db）加载，避免重复解析大 xlsx；
-若无 DB 则使用 reference table.xlsx，再回退到 data/ 下 CSV、YAML。
+若无 DB 则使用 reference table.xlsx（优先项目根目录，其次 data/reference table.xlsx），再回退到 data/ 下 CSV、YAML。
 """
 from __future__ import annotations
 import sqlite3
@@ -13,8 +13,21 @@ from .models import Scope
 
 _ROOT = Path(__file__).resolve().parents[1]
 _DATA = _ROOT / "data"
-_REF_TABLE = _ROOT / "reference table.xlsx"
+_REF_TABLE_ROOT = _ROOT / "reference table.xlsx"
+_REF_TABLE_DATA = _DATA / "reference table.xlsx"
 _REF_DB = _DATA / "reference_table.db"
+
+
+def default_ref_table_path() -> Path:
+    """
+    映射表 xlsx 默认路径：优先项目根目录，其次 data/（与 README 外置到 data 的常见放法一致）。
+    若均不存在，返回根目录路径（便于新建/报错提示一致）。
+    """
+    if _REF_TABLE_ROOT.exists():
+        return _REF_TABLE_ROOT
+    if _REF_TABLE_DATA.exists():
+        return _REF_TABLE_DATA
+    return _REF_TABLE_ROOT
 
 # 可能的 Excel 列名映射（兼容中英文）
 _SCOPE_COL_NAMES = ("排放范围", "scope", "Scope", "碳排放范围", "范围")
@@ -111,7 +124,7 @@ def _load_excel_mapping(path: Optional[Path] = None) -> List[Tuple[str, Scope, L
     从 reference table.xlsx 加载映射规则。
     返回 [(tax_code_prefix, scope, exclude_keywords, emission_factor_id), ...]
     """
-    p = path or _REF_TABLE
+    p = path or default_ref_table_path()
     if not p.exists():
         return []
     try:
@@ -202,7 +215,7 @@ class TaxCodeScopeMapper:
     优先从 SQLite（data/reference_table.db）加载；若无则从 reference table.xlsx，再回退到 YAML/CSV。
     """
     def __init__(self, ref_table_path: Optional[Path] = None, ref_db_path: Optional[Path] = None):
-        self._ref_table = Path(ref_table_path) if ref_table_path else _REF_TABLE
+        self._ref_table = Path(ref_table_path) if ref_table_path else default_ref_table_path()
         self._ref_db = Path(ref_db_path) if ref_db_path else _REF_DB
         self._prefix_to_scope: List[Tuple[str, Scope, List[str], str]] = []
         self._keyword_rules: List[Tuple[List[str], Scope, List[str], str]] = []

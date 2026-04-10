@@ -12,7 +12,7 @@
   color-scheme: dark;
 }
 
-[data-theme="light"] {
+html[data-theme="light"] {
   --bg: #f6f8fa;
   --card: #ffffff;
   --text: #24292f;
@@ -30,7 +30,7 @@
 
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  background: linear-gradient(135deg, #0f1419 0%, #1a2332 100%);
+  background: linear-gradient(135deg, var(--bg) 0%, var(--card) 100%);
   background-attachment: fixed;
   color: var(--text);
   min-height: 100vh;
@@ -39,8 +39,8 @@ body {
   transition: background-color 0.25s, color 0.25s;
 }
 
-[data-theme="light"] body {
-  background: linear-gradient(135deg, #f0f4f8 0%, #e8f0fe 100%);
+html[data-theme="light"] body {
+  background: linear-gradient(135deg, var(--bg) 0%, var(--card) 100%);
 }
 
 .container {
@@ -105,7 +105,7 @@ h1 {
   transition: background 0.25s, border-color 0.25s, box-shadow 0.25s;
 }
 
-[data-theme="light"] .card {
+html[data-theme="light"] .card {
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
 }
 
@@ -214,10 +214,10 @@ button.danger {
 .toast.error   { background: #3d1515; color: #f85149; border: 1px solid #f85149; }
 .toast.info    { background: #1a2e4a; color: #79c0ff; border: 1px solid #79c0ff; }
 
-[data-theme="light"] .toast.success { background: #dafbe1; color: #1a7f37; border: 1px solid #82cfb0; }
-[data-theme="light"] .toast.error   { background: #ffebe9; color: #cf222e; border: 1px solid #f7a5a0; }
-[data-theme="light"] .toast.info    { background: #ddf4ff; color: #0550ae; border: 1px solid #80c6ff; }
-[data-theme="light"] .toast        { box-shadow: 0 4px 16px rgba(0,0,0,0.12); }
+html[data-theme="light"] .toast.success { background: #dafbe1; color: #1a7f37; border: 1px solid #82cfb0; }
+html[data-theme="light"] .toast.error   { background: #ffebe9; color: #cf222e; border: 1px solid #f7a5a0; }
+html[data-theme="light"] .toast.info    { background: #ddf4ff; color: #0550ae; border: 1px solid #80c6ff; }
+html[data-theme="light"] .toast        { box-shadow: 0 4px 16px rgba(0,0,0,0.12); }
 
 @keyframes slideIn {
   from { opacity: 0; transform: translateX(40px); }
@@ -307,7 +307,7 @@ button.danger {
   transition: background 0.25s, border-color 0.25s;
 }
 
-[data-theme="light"] .stat-card {
+html[data-theme="light"] .stat-card {
   box-shadow: 0 1px 4px rgba(0,0,0,0.06);
 }
 
@@ -412,7 +412,7 @@ button.danger {
   box-shadow: 0 8px 32px rgba(0,0,0,0.5);
 }
 
-[data-theme="light"] .dialog-box {
+html[data-theme="light"] .dialog-box {
   box-shadow: 0 8px 32px rgba(0,0,0,0.15);
 }
 
@@ -437,7 +437,8 @@ button.danger {
   padding: 0.35rem 0.85rem;
   border-radius: 20px;
   font-size: 0.85rem;
-  z-index: 1000;
+  z-index: 10000;
+  cursor: pointer;
   transition: background 0.25s, border-color 0.15s, color 0.15s;
 }
 
