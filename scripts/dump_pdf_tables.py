@@ -5,7 +5,10 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 def main():
-    path = ROOT / "pdf-test" / "9.95元+14队+英制螺丝.pdf"
+    if len(sys.argv) < 2:
+        print("Usage: python scripts/dump_pdf_tables.py <pdf_path> [second_pdf_path]")
+        return
+    path = Path(sys.argv[1]).expanduser().resolve()
     if not path.exists():
         print("File not found:", path)
         return
@@ -24,9 +27,11 @@ def main():
                     print(f"  [{ri}]", row)
             if len(tables) and len(tables[0]) > 12:
                 print("  ...")
-    path2 = ROOT / "pdf-test" / "9元+14队+502强力胶.pdf"
-    if path2.exists():
-        print("\n" + "="*60 + "\n9元 PDF\n" + "="*60)
+    path2 = None
+    if len(sys.argv) >= 3:
+        path2 = Path(sys.argv[2]).expanduser().resolve()
+    if path2 and path2.exists():
+        print("\n" + "=" * 60 + "\nSECOND PDF\n" + "=" * 60)
         with pdfplumber.open(path2) as pdf:
             for i, page in enumerate(pdf.pages):
                 text = page.extract_text() or ""

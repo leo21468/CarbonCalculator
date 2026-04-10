@@ -5,7 +5,10 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 def main():
-    path = ROOT / "pdf-test" / "9元+14队+502强力胶.pdf"
+    if len(sys.argv) < 2:
+        print("Usage: python scripts/run_ocr_on_pdf.py <pdf_path>")
+        return
+    path = Path(sys.argv[1]).expanduser().resolve()
     if not path.exists():
         print("Not found:", path)
         return
