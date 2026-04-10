@@ -83,14 +83,9 @@ CarbonCalculator/
 │       ├── audit/                # 审计追踪：auditTrail、auditLogger、dataProvenance、报告模板
 │       ├── scenarios/            # 场景专项（水电/住宿/交通等）
 │       └── models/               # Invoice、EmissionResult
-├── tools/
-│   └── merge_core_into_datasets.py  # core.csv → grid + transport JSON + cpcd_catalog
 ├── scripts/
 │   └── import_reference_table_to_db.py   # xlsx → SQLite
-├── examples/
-│   ├── run_pipeline_demo.py
-│   └── cpcd_match_demo.py
-└── tests/
+└── docs/
 ```
 
 ## `data/` 数据文件说明
@@ -110,10 +105,8 @@ CarbonCalculator/
 **维护说明（`core.csv` 已冻结、不再例行更新）**
 
 - 运行时以 **`grid_carbon_factors.json`、`transport_factors.json`、`cpcd_catalog.csv`** 为准；**电力/货运因子**可直接改对应 JSON。
-- **新增 CPCD 产品**：写入 **`Emission factors.csv`** 后，仅重算合并目录（**不覆盖** 电网/货运 JSON）：  
-  `python tools/merge_core_into_datasets.py --catalog-only`
-- **必须从 core + xlsx 全量重算** `grid_carbon_factors.json` / `transport_factors.json` 时（会覆盖手改）：  
-  `python tools/merge_core_into_datasets.py`
+- **新增 CPCD 产品**：直接维护 **`Emission factors.csv`**；运行时优先使用已存在的 `cpcd_catalog.csv` 与 JSON 数据文件。
+- **电网/货运因子更新**：优先直接维护 `grid_carbon_factors.json`、`transport_factors.json`，避免引入额外数据重建流程。
 
 ## 依赖与运行
 
@@ -125,8 +118,6 @@ CarbonCalculator/
 ```bash
 pip install -r requirements.txt
 python run_server.py              # 启动前后端，访问 http://localhost:8000
-python examples/run_pipeline_demo.py
-python -m pytest tests/ -v
 ```
 
 ### Node.js（invoice-parser：多格式发票解析 + 因子匹配 + 核算）
@@ -137,13 +128,7 @@ python -m pytest tests/ -v
 ```bash
 cd invoice-parser
 npm install
-npm test
-npm run test:mapping              # 税号→Scope
-npm run test:factors              # 排放因子
-npm run test:matching             # 因子匹配
 npm run demo:matching             # 匹配演示
-npm run test:calculation          # 双模式核算
-node src/audit/testAudit.js      # 审计追踪测试（生成 JSON/HTML 报告）
 ```
 
 详见 [invoice-parser/README.md](invoice-parser/README.md)。
@@ -266,7 +251,7 @@ const htmlReport = auditLogger.exportAuditReport(invoice.invoiceNumber, 'html');
   - `POST /api/invoice/process` — JSON 发票体，默认碳价。  
   - `POST /api/invoice/process_with_daily_carbon_price` — JSON 体需含 `carbon_price_per_ton`（或 `carbon_prices` 与发票 `date` 匹配），可选 `carbon_price_date`。  
   Web 前端「发票分析」中填写可选碳价字段时会自动走上述「含碳价」接口。  
-- **企业记账对接（草案）**：见 **[docs/ENTERPRISE_INTEGRATION.md](docs/ENTERPRISE_INTEGRATION.md)**。提供 `POST /api/integration/accounting-sync`（在标准发票 JSON 外带回显 `erp_context`），可选配置 `ERP_CARBON_RESULT_WEBHOOK_URL` 在核算成功后向贵司 URL POST 结果（占位实现，生产需补鉴权与重试）。
+- **企业记账对接（草案）**：提供 `POST /api/integration/accounting-sync`（在标准发票 JSON 外带回显 `erp_context`），可选配置 `ERP_CARBON_RESULT_WEBHOOK_URL` 在核算成功后向贵司 URL POST 结果（占位实现，生产需补鉴权与重试）。
 
 ```bash
 python run_server.py

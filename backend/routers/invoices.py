@@ -74,6 +74,39 @@ def _build_response(result: dict, carbon_price_per_ton: float, carbon_price_date
     }
 
 
+def _persist_invoice_categories(
+    invoice_number: str | None,
+    carbon_price_per_ton: float,
+    carbon_price_date: str | None,
+    result: dict,
+) -> None:
+    """Persist classified invoice lines for /stats and /categories endpoints."""
+    classified = result.get("classified", [])
+    ers = result.get("emission_results") or [None] * len(classified)
+    if not classified:
+        return
+
+    records: list[InvoiceCategoryRecord] = []
+    for cl, er in zip(classified, ers):
+        emission_kg = float(getattr(er, "emission_kg", 0.0) if er is not None else 0.0)
+        records.append(
+            InvoiceCategoryRecord(
+                id=None,
+                invoice_number=invoice_number,
+                line_name=_normalize_name_single_line(cl.line.name or ""),
+                scope=cl.scope.value,
+                match_type=cl.match_type,
+                amount=float(cl.line.amount or 0.0),
+                emission_kg=emission_kg,
+                tax_code=cl.matched_tax_code,
+                carbon_price_per_ton=float(carbon_price_per_ton),
+                carbon_price_date=carbon_price_date,
+                carbon_cost_cny=float(carbon_cost_cny(emission_kg, carbon_price_per_ton)),
+            )
+        )
+    add_invoice_categories_batch(records)
+
+
 @router.post("/upload")
 async def upload_invoice(file: UploadFile = File(...)):
     if not file.filename:
@@ -98,6 +131,7 @@ async def upload_invoice(file: UploadFile = File(...)):
     pipeline = _get_pipeline()
     result = pipeline.process_invoice(invoice, ref_invoice_id=invoice.invoice_number)
     carbon_price_per_ton = float(getattr(pipeline.config.carbon_price, "price_per_ton", 100.0))
+    _persist_invoice_categories(invoice.invoice_number, carbon_price_per_ton, invoice.date, result)
     data = _build_response(result, carbon_price_per_ton, invoice.date)
     data["invoice_number"] = invoice.invoice_number
     data["seller"] = invoice.seller.name if invoice.seller else None
@@ -110,11 +144,34 @@ async def upload_invoice_with_daily_carbon_price(
     carbon_price_per_ton: float = Form(...),
     carbon_price_date: str | None = Form(None),
 ):
-    body = await upload_invoice(file=file)
-    body["data"]["carbon_price_per_ton"] = round(float(carbon_price_per_ton), 4)
-    if carbon_price_date is not None:
-        body["data"]["carbon_price_date"] = carbon_price_date
-    return body
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="请上传文件")
+    ext = os.path.splitext(file.filename.lower())[1]
+    if ext not in (".pdf", ".xml", ".ofd"):
+        raise HTTPException(status_code=400, detail="仅支持 PDF、OFD 和 XML 格式的发票文件")
+
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="文件内容为空")
+
+    if ext == ".pdf":
+        invoice = PdfInvoiceParser().parse(content)
+    elif ext == ".xml":
+        invoice = parse_invoice_from_xml(content)
+    else:
+        invoice = parse_invoice_from_ofd(content)
+    if not invoice.lines:
+        raise HTTPException(status_code=400, detail="未能从文件中提取到发票明细行")
+
+    price = float(carbon_price_per_ton)
+    date = carbon_price_date or invoice.date
+    pipeline = _build_pipeline_with_carbon_price(price)
+    result = pipeline.process_invoice(invoice, ref_invoice_id=invoice.invoice_number)
+    _persist_invoice_categories(invoice.invoice_number, price, date, result)
+    data = _build_response(result, price, date)
+    data["invoice_number"] = invoice.invoice_number
+    data["seller"] = invoice.seller.name if invoice.seller else None
+    return {"success": True, "data": data, "message": f"发票处理完成（含指定碳价），共 {len(data['lines'])} 条明细"}
 
 
 @router.post("/process")
@@ -127,8 +184,10 @@ def process_invoice_json(body: dict = Body(...)):
     pipeline = _get_pipeline()
     result = pipeline.process_invoice_from_dict(body)
     carbon_price_per_ton = float(getattr(pipeline.config.carbon_price, "price_per_ton", 100.0))
+    invoice_number = (body.get("invoice_number") or "").strip() or None
+    _persist_invoice_categories(invoice_number, carbon_price_per_ton, body.get("date"), result)
     data = _build_response(result, carbon_price_per_ton, body.get("date"))
-    data["invoice_number"] = (body.get("invoice_number") or "").strip() or None
+    data["invoice_number"] = invoice_number
     if isinstance(body.get("seller"), dict):
         data["seller"] = body.get("seller", {}).get("name")
     return {"success": True, "data": data, "message": f"发票处理完成，共 {len(data['lines'])} 条明细"}
@@ -144,8 +203,11 @@ def process_invoice_json_with_daily_carbon_price(body: dict = Body(...)):
     carbon_price_per_ton = float(body.get("carbon_price_per_ton"))
     pipeline = _build_pipeline_with_carbon_price(carbon_price_per_ton)
     result = pipeline.process_invoice_from_dict(body)
-    data = _build_response(result, carbon_price_per_ton, body.get("carbon_price_date") or body.get("date"))
-    data["invoice_number"] = (body.get("invoice_number") or "").strip() or None
+    invoice_number = (body.get("invoice_number") or "").strip() or None
+    carbon_price_date = body.get("carbon_price_date") or body.get("date")
+    _persist_invoice_categories(invoice_number, carbon_price_per_ton, carbon_price_date, result)
+    data = _build_response(result, carbon_price_per_ton, carbon_price_date)
+    data["invoice_number"] = invoice_number
     return {"success": True, "data": data, "message": f"发票处理完成（含指定碳价），共 {len(data['lines'])} 条明细"}
 
 

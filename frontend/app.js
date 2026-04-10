@@ -303,6 +303,70 @@
     const invoiceResult = $('invoiceResult');
     if (!invoiceResult) return;
 
+    function scopeClass(scope) {
+      if (!scope) return '';
+      if (scope.includes('1')) return 'scope1';
+      if (scope.includes('2')) return 'scope2';
+      return 'scope3';
+    }
+
+    function showInvoiceResult(body) {
+      const data = unwrap(body);
+      const msg = body.message || '';
+      let html = `<p style="color:var(--success);margin-bottom:0.75rem;">✓ ${escapeHtml(msg)}</p>`;
+      if (data.invoice_number || data.seller) {
+        html += '<div style="margin-bottom:0.75rem;font-size:0.9rem;color:var(--muted);">';
+        if (data.invoice_number) html += `发票号码：${escapeHtml(String(data.invoice_number))}　`;
+        if (data.seller) html += `销方：${escapeHtml(String(data.seller))}`;
+        html += '</div>';
+      }
+      if (data.total_emissions_kg != null) {
+        html += `<div class="stat-card" style="margin-bottom:0.75rem;">
+          <div class="label">总排放</div>
+          <div class="value">${escapeHtml(String(data.total_emissions_kg))} kgCO2e</div>
+        </div>`;
+      }
+
+      const priceTon = data.carbon_price_per_ton != null ? data.carbon_price_per_ton : null;
+      const totalCostCny = data.total_carbon_cost_cny;
+      if (priceTon != null || totalCostCny != null) {
+        html += '<div class="stats-grid" style="margin-bottom:0.75rem;">';
+        if (priceTon != null) {
+          html += `<div class="stat-card"><div class="label">核算碳价</div><div class="value">${escapeHtml(String(priceTon))} 元/吨</div></div>`;
+        }
+        if (data.carbon_price_date) {
+          html += `<div class="stat-card"><div class="label">碳价日期</div><div class="value">${escapeHtml(String(data.carbon_price_date))}</div></div>`;
+        }
+        if (totalCostCny != null) {
+          html += `<div class="stat-card"><div class="label">本发票碳成本合计</div><div class="value">¥${escapeHtml(String(totalCostCny))}</div></div>`;
+        }
+        html += '</div>';
+      }
+
+      if (data.aggregate) {
+        html += '<div class="stats-grid">';
+        for (const [scope, kg] of Object.entries(data.aggregate)) {
+          html += `<div class="stat-card"><div class="label">${escapeHtml(scope)}</div><div class="value">${escapeHtml(String(kg))} kg</div></div>`;
+        }
+        html += '</div>';
+      }
+      if (data.lines && data.lines.length) {
+        html += '<table class="category-table"><tr><th>名称</th><th>范围</th><th>匹配方式</th><th>金额</th><th>排放(kg)</th><th>碳价(元/吨)</th><th>碳成本(元)</th></tr>';
+        for (const l of data.lines) {
+          const nameSafe = escapeHtml((l.name || '').replace(/\s+/g, ' ').trim());
+          html += `<tr><td class="name-cell" title="${nameSafe}">${nameSafe}</td>
+            <td><span class="scope-tag ${scopeClass(l.scope)}">${escapeHtml(l.scope || '')}</span></td>
+            <td>${escapeHtml(l.match_type || '')}</td>
+            <td>¥${escapeHtml(String(l.amount ?? ''))}</td>
+            <td>${escapeHtml(String(l.emission_kg ?? ''))}</td>
+            <td>${escapeHtml(String(l.carbon_price_per_ton ?? ''))}</td>
+            <td>${escapeHtml(String(l.carbon_cost_cny ?? ''))}</td></tr>`;
+        }
+        html += '</table>';
+      }
+      invoiceResult.innerHTML = html;
+    }
+
     document.querySelectorAll('[data-invoice-mode]').forEach(btn => {
       btn.addEventListener('click', () => {
         document.querySelectorAll('[data-invoice-mode]').forEach(b => b.classList.remove('active'));
@@ -322,10 +386,23 @@
       }
       const fd = new FormData();
       fd.append('file', fileInput.files[0]);
+      const priceRaw = ($('invoiceCarbonPrice')?.value || '').trim();
+      const dateRaw = ($('invoiceCarbonPriceDate')?.value || '').trim();
+      let path = '/api/invoice/upload';
+      if (priceRaw !== '') {
+        const p = parseFloat(priceRaw);
+        if (Number.isNaN(p) || p < 0) {
+          invoiceResult.innerHTML = '<p class="error-msg">碳价需为非负数字</p>';
+          return;
+        }
+        fd.append('carbon_price_per_ton', String(p));
+        if (dateRaw) fd.append('carbon_price_date', dateRaw);
+        path = '/api/invoice/upload_with_daily_carbon_price';
+      }
       invoiceResult.innerHTML = '处理中...';
       try {
-        const body = await ApiClient.post('/api/invoice/upload', fd, $('btnUpload'));
-        invoiceResult.innerHTML = `<pre>${escapeHtml(JSON.stringify(unwrap(body), null, 2))}</pre>`;
+        const body = await ApiClient.post(path, fd, $('btnUpload'));
+        showInvoiceResult(body);
       } catch (err) {
         invoiceResult.innerHTML = `<p class="error-msg">${err.message}</p>`;
       }
@@ -342,10 +419,23 @@
         invoiceResult.innerHTML = `<p class="error-msg">JSON 格式错误：${e.message}</p>`;
         return;
       }
+      const priceRaw = ($('invoiceJsonCarbonPrice')?.value || '').trim();
+      const dateRaw = ($('invoiceJsonCarbonPriceDate')?.value || '').trim();
+      let path = '/api/invoice/process';
+      if (priceRaw !== '') {
+        const p = parseFloat(priceRaw);
+        if (Number.isNaN(p) || p < 0) {
+          invoiceResult.innerHTML = '<p class="error-msg">碳价需为非负数字</p>';
+          return;
+        }
+        body = { ...body, carbon_price_per_ton: p };
+        if (dateRaw) body.carbon_price_date = dateRaw;
+        path = '/api/invoice/process_with_daily_carbon_price';
+      }
       invoiceResult.innerHTML = '处理中...';
       try {
-        const resp = await ApiClient.post('/api/invoice/process', body, $('btnSubmitJson'));
-        invoiceResult.innerHTML = `<pre>${escapeHtml(JSON.stringify(unwrap(resp), null, 2))}</pre>`;
+        const resp = await ApiClient.post(path, body, $('btnSubmitJson'));
+        showInvoiceResult(resp);
       } catch (err) {
         invoiceResult.innerHTML = `<p class="error-msg">${err.message}</p>`;
       }
@@ -546,8 +636,58 @@
         ApiClient.get('/api/invoice/stats'),
         ApiClient.get('/api/invoice/categories'),
       ]);
-      statsGrid.innerHTML = `<pre>${escapeHtml(JSON.stringify(unwrap(statsBody), null, 2))}</pre>`;
-      categoryList.innerHTML = `<pre>${escapeHtml(JSON.stringify(unwrap(catBody), null, 2))}</pre>`;
+      const stats = unwrap(statsBody);
+      const categories = unwrap(catBody);
+
+      if (stats && Object.keys(stats).length) {
+        let totalCount = 0;
+        let totalAmount = 0;
+        let totalEmission = 0;
+        let totalCost = 0;
+        let cardsHtml = '';
+        for (const [scope, s] of Object.entries(stats)) {
+          totalCount += Number(s.count || 0);
+          totalAmount += Number(s.total_amount || 0);
+          totalEmission += Number(s.total_emission_kg || 0);
+          totalCost += Number(s.total_carbon_cost_cny || 0);
+          const sc = scope.includes('1') ? 'scope1' : scope.includes('2') ? 'scope2' : 'scope3';
+          cardsHtml += `<div class="stat-card">
+            <div class="label"><span class="scope-tag ${sc}">${escapeHtml(scope)}</span></div>
+            <div class="value">${escapeHtml(String(s.count || 0))} 条</div>
+            <div style="color:var(--muted);font-size:0.8rem;">¥${escapeHtml(String(s.total_amount || 0))} | ${escapeHtml(String(s.total_emission_kg || 0))} kg | ¥${escapeHtml(String(s.total_carbon_cost_cny || 0))}</div>
+          </div>`;
+        }
+        statsGrid.innerHTML = `<div class="stat-card">
+          <div class="label">合计</div>
+          <div class="value">${totalCount} 条</div>
+          <div style="color:var(--muted);font-size:0.8rem;">¥${totalAmount.toFixed(2)} | ${totalEmission.toFixed(4)} kg | ¥${totalCost.toFixed(2)}</div>
+        </div>` + cardsHtml;
+      } else {
+        statsGrid.innerHTML = '<p style="color:var(--muted)">暂无统计数据，请先上传发票</p>';
+      }
+
+      if (categories && categories.length) {
+        function scopeClass(scope) {
+          if (!scope) return '';
+          if (scope.includes('1')) return 'scope1';
+          if (scope.includes('2')) return 'scope2';
+          return 'scope3';
+        }
+        let tbl = '<table class="category-table"><tr><th>发票号</th><th>名称</th><th>范围</th><th>匹配</th><th>金额</th><th>排放(kg)</th><th>碳成本(元)</th><th>时间</th></tr>';
+        for (const c of categories) {
+          tbl += `<tr><td>${escapeHtml(c.invoice_number || '-')}</td><td>${escapeHtml((c.line_name || '').replace(/\s+/g, ' ').trim())}</td>
+            <td><span class="scope-tag ${scopeClass(c.scope)}">${escapeHtml(c.scope || '')}</span></td>
+            <td>${escapeHtml(c.match_type || '')}</td>
+            <td>¥${escapeHtml(String(c.amount ?? ''))}</td>
+            <td>${escapeHtml(String(c.emission_kg ?? ''))}</td>
+            <td>¥${escapeHtml(String(c.carbon_cost_cny ?? '0'))}</td>
+            <td>${escapeHtml(c.created_at || '-')}</td></tr>`;
+        }
+        tbl += '</table>';
+        categoryList.innerHTML = tbl;
+      } else {
+        categoryList.innerHTML = '<p style="color:var(--muted)">暂无类别记录</p>';
+      }
     } catch (e) {
       statsGrid.innerHTML = `<p class="error-msg">${e.message}</p>`;
       categoryList.innerHTML = '';
