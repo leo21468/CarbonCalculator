@@ -12,6 +12,29 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+
+def _load_dotenv_file() -> None:
+    """Load project .env without requiring python-dotenv."""
+    env_path = ROOT / ".env"
+    if not env_path.exists():
+        return
+    try:
+        lines = env_path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return
+    for raw in lines:
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if key and key not in os.environ:
+            os.environ[key] = value
+
+
+_load_dotenv_file()
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -23,6 +46,7 @@ from backend.routers.invoices import router as invoices_router
 from backend.routers.airports import router as airports_router
 from backend.routers.integration import router as integration_router
 from backend.routers.factors import router as factors_router
+from backend.routers.flight_ticket import router as flight_ticket_router
 
 logger = logging.getLogger("carbon_api")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -69,6 +93,7 @@ app.include_router(invoices_router)
 app.include_router(airports_router)
 app.include_router(integration_router)
 app.include_router(factors_router)
+app.include_router(flight_ticket_router)
 
 # ---------- 静态文件 ----------
 frontend_dir = ROOT / "frontend"

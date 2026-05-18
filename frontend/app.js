@@ -757,6 +757,105 @@
     }
   }
 
+  // ─── 面板4：机票图片核算 ─────────────────────────────────
+  function initFlightTicketPanel() {
+    const form = $('flightTicketForm');
+    const fileInput = $('flightTicketFile');
+    const resultEl = $('flightTicketResult');
+    const btn = $('btnAnalyzeFlight');
+    if (!form || !fileInput || !resultEl) return;
+
+    function confidenceClass(conf) {
+      if (conf === '高置信') return 'ok';
+      if (conf === '中置信') return 'warn';
+      return 'err';
+    }
+
+    function methodLabel(method) {
+      return {
+        activity_distance: '活动数据法',
+        estimated_activity_distance: '估算版活动数据法',
+        eeio_amount: 'EEIO 金额估算法',
+        manual_review: '人工复核',
+      }[method] || method || '-';
+    }
+
+    function showFlightResult(body) {
+      const data = unwrap(body);
+      const fields = data.extracted_fields || {};
+      let html = '';
+      html += `<div class="flight-summary">
+        <div class="stat-card"><div class="label">识别结果</div><div class="value">${escapeHtml(data.ticket_type || '机票')}</div></div>
+        <div class="stat-card"><div class="label">计算路径</div><div class="value">${escapeHtml(methodLabel(data.calculation_method))}</div></div>
+        <div class="stat-card"><div class="label">排放结果</div><div class="value">${data.total_emissions_kg != null ? escapeHtml(String(data.total_emissions_kg)) + ' kg' : '-'}</div></div>
+        <div class="stat-card"><div class="label">置信度</div><div class="value confidence-${confidenceClass(data.confidence)}">${escapeHtml(data.confidence || '-')}</div></div>
+      </div>`;
+
+      html += '<div class="result-item"><span class="k">乘机人</span><span class="v">' + escapeHtml(fields.passenger_name || '-') + '</span></div>';
+      html += '<div class="result-item"><span class="k">总金额</span><span class="v">' + escapeHtml(fields.total_amount != null ? String(fields.total_amount) : '-') + '</span></div>';
+      html += '<div class="result-item"><span class="k">碳价</span><span class="v">' + escapeHtml(String(data.carbon_price_per_ton ?? '-')) + ' 元/吨 · ' + escapeHtml(data.carbon_price_source || '-') + '</span></div>';
+      html += '<div class="result-item"><span class="k">碳成本</span><span class="v">' + (data.carbon_cost_cny != null ? '¥' + escapeHtml(String(data.carbon_cost_cny)) : '-') + '</span></div>';
+
+      if (data.segments && data.segments.length) {
+        html += '<h3 class="section-title">航段明细</h3>';
+        html += '<table class="category-table"><tr><th>航段</th><th>航班</th><th>日期</th><th>舱位</th><th>距离(km)</th><th>因子</th><th>排放(kg)</th></tr>';
+        for (const s of data.segments) {
+          html += `<tr>
+            <td>${escapeHtml(s.departure || '-')} → ${escapeHtml(s.arrival || '-')}</td>
+            <td>${escapeHtml(s.flight_number || '-')}</td>
+            <td>${escapeHtml(s.date || '-')}</td>
+            <td>${escapeHtml(s.class || '-')}</td>
+            <td>${escapeHtml(String(s.distance_km ?? '-'))}</td>
+            <td>${escapeHtml(String(s.factor_kg_per_passenger_km ?? '-'))}</td>
+            <td>${escapeHtml(String(s.emission_kg ?? '-'))}</td>
+          </tr>`;
+        }
+        html += '</table>';
+      }
+
+      if (data.warnings && data.warnings.length) {
+        html += '<div class="flight-warnings"><strong>复核提示</strong>' + data.warnings.map(w => `<p>${escapeHtml(w)}</p>`).join('') + '</div>';
+      }
+      if (data.assumptions && data.assumptions.length) {
+        html += '<div class="factor-hint"><strong>假设</strong>：' + escapeHtml(data.assumptions.join('；')) + '</div>';
+      }
+      if (data.explanation) {
+        html += '<h3 class="section-title">进一步的计算过程与解释</h3>';
+        html += `<pre class="flight-explanation">${escapeHtml(data.explanation)}</pre>`;
+      }
+      resultEl.innerHTML = html;
+    }
+
+    form.addEventListener('submit', async e => {
+      e.preventDefault();
+      if (!fileInput.files || !fileInput.files.length) {
+        resultEl.innerHTML = '<p class="error-msg">请选择机票图片</p>';
+        return;
+      }
+      const fd = new FormData();
+      fd.append('file', fileInput.files[0]);
+      const priceRaw = ($('flightCarbonPrice')?.value || '').trim();
+      const dateRaw = ($('flightCarbonPriceDate')?.value || '').trim();
+      if (priceRaw) {
+        const price = parseFloat(priceRaw);
+        if (Number.isNaN(price) || price < 0) {
+          resultEl.innerHTML = '<p class="error-msg">兜底碳价需为非负数字</p>';
+          return;
+        }
+        fd.append('carbon_price_per_ton', String(price));
+      }
+      if (dateRaw) fd.append('carbon_price_date', dateRaw);
+      resultEl.innerHTML = '处理中...';
+      try {
+        const resp = await ApiClient.post('/api/flight-ticket/analyze', fd, btn);
+        showFlightResult(resp);
+      } catch (err) {
+        resultEl.innerHTML = `<p class="error-msg">${err.message}</p>`;
+        Toast.error(err.message);
+      }
+    });
+  }
+
   // ─── 面板5：机场距离计算 ───────────────────────────────────
   function initDistancePanel() {
     const fromInput = $('fromAirportInput');
@@ -826,6 +925,7 @@
     initManagePanel();
     initManageList();
     initProductListEvents();
+    initFlightTicketPanel();
     initDistancePanel();
     loadProductList();
   });
