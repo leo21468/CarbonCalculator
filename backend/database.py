@@ -3,7 +3,7 @@
 """
 from __future__ import annotations
 import sqlite3
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -40,6 +40,24 @@ class InvoiceCategoryRecord:
     carbon_price_date: Optional[str] = None  # 对应日期（YYYY-MM-DD）
     carbon_cost_cny: float = 0.0  # 碳成本（元）
     created_at: Optional[str] = None
+
+
+@dataclass
+class ExternalFactorCandidate:
+    """联网搜索得到的候选碳因子，采纳前不参与核算。"""
+    id: Optional[int]
+    query_text: str
+    product_name: str
+    factor_value: float
+    unit: str
+    region: str = ""
+    year: str = ""
+    source_name: str = ""
+    source_url: str = ""
+    confidence: float = 0.0
+    raw_payload_json: str = ""
+    created_at: Optional[str] = None
+    last_checked_at: Optional[str] = None
 
 
 def _init_db(conn: sqlite3.Connection) -> None:
@@ -80,6 +98,23 @@ def _init_db(conn: sqlite3.Connection) -> None:
             applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS external_factor_candidates (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            query_text TEXT NOT NULL,
+            product_name TEXT NOT NULL,
+            factor_value REAL NOT NULL,
+            unit TEXT NOT NULL,
+            region TEXT,
+            year TEXT,
+            source_name TEXT,
+            source_url TEXT,
+            confidence REAL NOT NULL DEFAULT 0,
+            raw_payload_json TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            last_checked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
     # 索引：提升查询性能
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_product_name ON custom_products(product_name)"
@@ -89,6 +124,12 @@ def _init_db(conn: sqlite3.Connection) -> None:
     )
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_invoice_number ON invoice_categories(invoice_number)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_external_factor_query ON external_factor_candidates(query_text)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_external_factor_source ON external_factor_candidates(source_name, source_url)"
     )
     _apply_migrations(conn)
     conn.commit()
@@ -126,6 +167,27 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
         except Exception:
             pass
         conn.execute("INSERT OR IGNORE INTO schema_version(version) VALUES(3)")
+
+    # 版本4：联网因子候选缓存表
+    if current < 4:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS external_factor_candidates (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                query_text TEXT NOT NULL,
+                product_name TEXT NOT NULL,
+                factor_value REAL NOT NULL,
+                unit TEXT NOT NULL,
+                region TEXT,
+                year TEXT,
+                source_name TEXT,
+                source_url TEXT,
+                confidence REAL NOT NULL DEFAULT 0,
+                raw_payload_json TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                last_checked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.execute("INSERT OR IGNORE INTO schema_version(version) VALUES(4)")
 
 
 def get_connection() -> sqlite3.Connection:
@@ -249,6 +311,139 @@ def update_product(product_id: int, fields: dict) -> bool:
         cur = conn.execute(f"UPDATE custom_products SET {set_clause} WHERE id = ?", values)
         conn.commit()
         return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+# ---------- 联网因子候选缓存 ----------
+
+
+def _candidate_from_row(r: sqlite3.Row) -> ExternalFactorCandidate:
+    return ExternalFactorCandidate(
+        id=r["id"],
+        query_text=r["query_text"],
+        product_name=r["product_name"],
+        factor_value=float(r["factor_value"]),
+        unit=r["unit"],
+        region=r["region"] or "",
+        year=r["year"] or "",
+        source_name=r["source_name"] or "",
+        source_url=r["source_url"] or "",
+        confidence=float(r["confidence"] or 0.0),
+        raw_payload_json=r["raw_payload_json"] or "",
+        created_at=r["created_at"] if "created_at" in r.keys() else None,
+        last_checked_at=r["last_checked_at"] if "last_checked_at" in r.keys() else None,
+    )
+
+
+def save_external_factor_candidate(c: ExternalFactorCandidate) -> int:
+    """
+    保存联网候选。若同一查询/来源/产品/单位已存在，则刷新数值与检查时间。
+    """
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            """SELECT id FROM external_factor_candidates
+               WHERE query_text = ?
+                 AND product_name = ?
+                 AND unit = ?
+                 AND COALESCE(source_name, '') = ?
+                 AND COALESCE(source_url, '') = ?
+               ORDER BY id DESC LIMIT 1""",
+            (
+                c.query_text,
+                c.product_name,
+                c.unit,
+                c.source_name or "",
+                c.source_url or "",
+            ),
+        ).fetchone()
+        if row:
+            conn.execute(
+                """UPDATE external_factor_candidates
+                   SET factor_value = ?, region = ?, year = ?, confidence = ?,
+                       raw_payload_json = ?, last_checked_at = CURRENT_TIMESTAMP
+                   WHERE id = ?""",
+                (
+                    float(c.factor_value),
+                    c.region,
+                    c.year,
+                    float(c.confidence),
+                    c.raw_payload_json,
+                    row["id"],
+                ),
+            )
+            conn.commit()
+            return int(row["id"])
+        cur = conn.execute(
+            """INSERT INTO external_factor_candidates
+               (query_text, product_name, factor_value, unit, region, year,
+                source_name, source_url, confidence, raw_payload_json)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                c.query_text,
+                c.product_name,
+                float(c.factor_value),
+                c.unit,
+                c.region,
+                c.year,
+                c.source_name,
+                c.source_url,
+                float(c.confidence),
+                c.raw_payload_json,
+            ),
+        )
+        conn.commit()
+        return int(cur.lastrowid)
+    finally:
+        conn.close()
+
+
+def list_external_factor_candidates(
+    query_text: Optional[str] = None,
+    region: Optional[str] = None,
+    year: Optional[str] = None,
+    limit: int = 10,
+) -> List[ExternalFactorCandidate]:
+    conn = get_connection()
+    try:
+        sql = """SELECT id, query_text, product_name, factor_value, unit, region, year,
+                        source_name, source_url, confidence, raw_payload_json,
+                        created_at, last_checked_at
+                 FROM external_factor_candidates"""
+        where = []
+        params: list = []
+        if query_text:
+            escaped = query_text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            where.append("(query_text LIKE ? ESCAPE '\\' OR product_name LIKE ? ESCAPE '\\')")
+            params.extend([f"%{escaped}%", f"%{escaped}%"])
+        if region:
+            where.append("COALESCE(region, '') = ?")
+            params.append(region)
+        if year:
+            where.append("COALESCE(year, '') = ?")
+            params.append(str(year))
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        sql += " ORDER BY last_checked_at DESC, confidence DESC LIMIT ?"
+        params.append(int(limit))
+        rows = conn.execute(sql, params).fetchall()
+        return [_candidate_from_row(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def get_external_factor_candidate(candidate_id: int) -> Optional[ExternalFactorCandidate]:
+    conn = get_connection()
+    try:
+        r = conn.execute(
+            """SELECT id, query_text, product_name, factor_value, unit, region, year,
+                      source_name, source_url, confidence, raw_payload_json,
+                      created_at, last_checked_at
+               FROM external_factor_candidates WHERE id = ?""",
+            (candidate_id,),
+        ).fetchone()
+        return _candidate_from_row(r) if r else None
     finally:
         conn.close()
 

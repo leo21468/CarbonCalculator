@@ -46,6 +46,26 @@ class MatchRequest(BaseModel):
     product_name: str
 
 
+def _external_suggestions_for(name: str) -> dict:
+    """Best-effort联网候选，失败时不影响 /api/match 的旧行为。"""
+    try:
+        from backend.factor_search import search_factors
+        data = search_factors(product_name=name, include_external=True)
+        return {
+            "external_suggestions": data.get("external_candidates", []),
+            "external_enabled": data.get("external_enabled", False),
+            "external_attempted": data.get("external_attempted", False),
+            "external_errors": data.get("external_errors", []),
+        }
+    except Exception:
+        return {
+            "external_suggestions": [],
+            "external_enabled": False,
+            "external_attempted": False,
+            "external_errors": [],
+        }
+
+
 @router.post(
     "/api/match",
     summary="碳足迹匹配",
@@ -85,6 +105,7 @@ def match_product(req: MatchRequest):
         matcher = _get_matcher()
         matches = matcher.match(name, top_k=1, min_similarity=0.01)
         if not matches:
+            suggestions = _external_suggestions_for(name)
             return {
                 "success": True,
                 "data": {
@@ -96,12 +117,14 @@ def match_product(req: MatchRequest):
                     "unit": "-",
                     "carbon_cost_cny": None,
                     "price_per_ton": _CARBON_PRICE,
+                    **suggestions,
                 },
                 "message": "未找到匹配产品，可添加自定义数据",
             }
         m = matches[0]
         co2_kg, unit = parse_carbon_footprint(m.carbon_footprint)
         cost = carbon_cost_cny(co2_kg, _CARBON_PRICE) if co2_kg > 0 else None
+        suggestions = _external_suggestions_for(name) if float(m.similarity or 0.0) < 0.30 else {}
         return {
             "success": True,
             "data": {
@@ -114,6 +137,7 @@ def match_product(req: MatchRequest):
                 "carbon_cost_cny": round(cost, 2) if cost is not None else None,
                 "price_per_ton": _CARBON_PRICE,
                 "similarity": round(m.similarity, 3),
+                **suggestions,
             },
             "message": "",
         }

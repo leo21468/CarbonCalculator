@@ -252,6 +252,71 @@ html[data-theme="light"] .toast        { box-shadow: 0 4px 16px rgba(0,0,0,0.12)
 .source-tag.cpcd   { background: rgba(88,166,255,0.2); color: var(--accent); }
 .source-tag.custom { background: rgba(63,185,80,0.2);  color: var(--success); }
 
+/* 联网候选因子 */
+.factor-suggestions {
+  margin-top: 1rem;
+  border-top: 1px solid var(--border);
+  padding-top: 1rem;
+}
+
+.factor-suggestions h3 {
+  margin: 0 0 0.35rem;
+  font-size: 1rem;
+}
+
+.factor-hint {
+  color: var(--muted);
+  font-size: 0.85rem;
+  margin-top: 0.75rem;
+}
+
+.factor-candidate {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.55rem 0.75rem;
+  align-items: center;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.75rem;
+  margin-top: 0.65rem;
+}
+
+.candidate-main {
+  display: flex;
+  gap: 0.6rem;
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+
+.candidate-main span {
+  color: var(--success);
+  font-size: 0.9rem;
+}
+
+.candidate-meta {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem 0.9rem;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.candidate-meta a {
+  color: var(--accent);
+}
+
+.factor-errors {
+  color: var(--warning);
+  font-size: 0.8rem;
+  margin-top: 0.6rem;
+}
+
+.factor-errors p {
+  margin: 0.15rem 0;
+}
+
 /* Scope 徽章 */
 .scope-tag {
   display: inline-block;

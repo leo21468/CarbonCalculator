@@ -240,10 +240,54 @@
       return 'scope3';
     }
 
+    function renderExternalSuggestions(data) {
+      const suggestions = data && Array.isArray(data.external_suggestions) ? data.external_suggestions : [];
+      const errors = data && Array.isArray(data.external_errors) ? data.external_errors : [];
+      const enabled = data && data.external_enabled;
+      const attempted = data && data.external_attempted;
+      if (!suggestions.length && !errors.length && data && data.source && data.source !== 'none' && data.external_enabled == null) {
+        return '';
+      }
+      if (!suggestions.length && !errors.length && !enabled) {
+        return '<div class="factor-hint">联网候选搜索未开启；可在后端配置 ENABLE_EXTERNAL_FACTOR_SEARCH=true 后使用。</div>';
+      }
+      let html = '';
+      if (suggestions.length) {
+        html += '<div class="factor-suggestions"><h3>联网候选因子</h3>';
+        html += '<p class="factor-hint">候选数据需人工核验并采纳后，才会进入本地产品库参与核算。</p>';
+        for (const c of suggestions) {
+          const source = c.source_url
+            ? `<a href="${escapeHtml(c.source_url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(c.source_name || '外部来源')}</a>`
+            : escapeHtml(c.source_name || '外部来源');
+          html += `<div class="factor-candidate">
+            <div class="candidate-main">
+              <strong>${escapeHtml(c.product_name || '-')}</strong>
+              <span>${escapeHtml(String(c.factor_value ?? '-'))} kgCO2e/${escapeHtml(c.unit || '-')}</span>
+            </div>
+            <div class="candidate-meta">
+              <span>来源：${source}</span>
+              <span>年份：${escapeHtml(c.year || '-')}</span>
+              <span>地区：${escapeHtml(c.region || '-')}</span>
+              <span>置信度：${escapeHtml(String(c.confidence ?? '-'))}</span>
+            </div>
+            <button class="secondary btn-adopt-factor" data-id="${escapeHtml(String(c.id || ''))}" ${c.adoptable ? '' : 'disabled'}>采纳到本地库</button>
+          </div>`;
+        }
+        html += '</div>';
+      } else if (enabled && attempted) {
+        html += '<div class="factor-hint">已尝试联网搜索，暂未找到可结构化采纳的候选。</div>';
+      }
+      if (errors.length) {
+        html += `<div class="factor-errors">${errors.map(e => `<p>${escapeHtml(e)}</p>`).join('')}</div>`;
+      }
+      return html;
+    }
+
     function showResult(body) {
       const data = unwrap(body);
       if (!data || data.source === 'none') {
-        resultEl.innerHTML = `<p class="error-msg">${(body && body.message) || data && data.message || '未找到匹配'}</p>`;
+        const msg = (body && body.message) || data && data.message || '未找到匹配';
+        resultEl.innerHTML = `<p class="error-msg">${escapeHtml(msg)}</p>` + renderExternalSuggestions(data || {});
         return;
       }
       const tag = data.source === 'custom' ? 'custom' : 'cpcd';
@@ -261,7 +305,7 @@
       if (data.similarity != null) rows.splice(1, 0, ['相似度', data.similarity]);
       resultEl.innerHTML = rows.map(([k, v]) =>
         `<div class="result-item"><span class="k">${k}</span><span class="v">${v}</span></div>`
-      ).join('');
+      ).join('') + renderExternalSuggestions(data);
     }
 
     async function doQuery() {
@@ -287,6 +331,25 @@
     btnQuery.addEventListener('click', doQuery);
     input.addEventListener('keydown', e => { if (e.key === 'Enter') doQuery(); });
     btnClear.addEventListener('click', () => { resultEl.innerHTML = ''; });
+    resultEl.addEventListener('click', async e => {
+      const btn = e.target.closest('.btn-adopt-factor');
+      if (!btn || !btn.dataset.id) return;
+      const ok = await confirm('联网数据需核验，采纳后才会进入本地产品库并参与后续核算。按默认 Scope 3、100 元/吨碳价采纳吗？');
+      if (!ok) return;
+      try {
+        await ApiClient.post('/api/factors/adopt', {
+          id: parseInt(btn.dataset.id, 10),
+          carbon_type: 'Scope 3',
+          price_per_ton: 100,
+          remark: '前端查询页采纳',
+        }, btn);
+        Toast.success('已采纳到本地产品库');
+        loadProductList();
+        doQuery();
+      } catch (err) {
+        Toast.error(err.message);
+      }
+    });
 
     // 防抖自动建议（300ms）
     const debouncedHint = debounce(async () => {
